@@ -169,3 +169,39 @@ def test_live_feed_drives_orchestrator_pipeline(engine):
     # ...and the coordinator subscribed the option's quotes for exit tracking.
     assert any(not isidx and any(t.endswith("CE") for t in toks)
                for toks, isidx in neo.subscriptions)
+
+
+# -- Real Kotak socket envelope (from live probe) -------------------------------------
+
+
+def test_unwrap_nested_stock_feed():
+    from algo_trading.broker.live_feed import _unwrap
+    msg = {"type": "stock_feed", "data": [{"tk": "44612", "ltp": "597.30", "oi": "467870"}]}
+    mtype, recs = _unwrap(msg)
+    assert mtype == "stock_feed" and len(recs) == 1 and recs[0]["oi"] == "467870"
+
+
+def test_dispatch_captures_oi_from_socket_envelope():
+    neo = FakeNeo()
+    ticks: list = []
+    coord = LiveFeedCoordinator(_settings(), neo, on_tick=ticks.append, on_order_event=lambda e: None)
+    coord.start()
+    # exact shape seen from the live feed (nested data array; token=tk, volume=v, oi=oi)
+    neo.on_message({"type": "stock_feed", "data": [
+        {"tk": "44612", "ltp": "597.30", "oi": "467870", "v": "298740", "e": "nse_fo"},
+        {"tk": "44613", "name": "ack"},  # subscription-ack record -> ignored
+    ]})
+    assert len(ticks) == 1
+    assert ticks[0].instrument_token == "44612"
+    assert ticks[0].oi == 467870
+    assert ticks[0].volume == 298740
+
+
+def test_dispatch_order_envelope_routes_to_order_feed():
+    neo = FakeNeo()
+    events: list = []
+    coord = LiveFeedCoordinator(_settings(), neo, on_tick=lambda t: None, on_order_event=events.append)
+    coord.start()
+    neo.on_message({"type": "order_feed", "data": [
+        {"tag": "alg1", "ordSt": "complete", "fldQty": "75", "qty": "75", "nOrdNo": "B1"}]})
+    assert len(events) == 1 and events[0].state is OrderState.FILLED

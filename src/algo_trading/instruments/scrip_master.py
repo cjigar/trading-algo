@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -43,6 +43,32 @@ class ScripMasterError(RuntimeError):
     pass
 
 
+def _extract_csv_url(resp: Any, segment: str) -> str | None:
+    """Find the scrip-master CSV URL for ``segment`` in a str / list / nested-dict SDK response."""
+    if isinstance(resp, str):
+        return resp if ("http" in resp or resp.endswith(".csv")) else None
+    if isinstance(resp, list):
+        for item in resp:
+            url = _extract_csv_url(item, segment)
+            if url:
+                return url
+        return None
+    if isinstance(resp, dict):
+        # prefer a value whose key or content mentions the segment; else any csv/http url
+        candidates: list[str] = []
+        for key, val in resp.items():
+            if isinstance(val, str) and ("http" in val or val.endswith(".csv")):
+                if segment.lower() in val.lower() or segment.lower() in str(key).lower():
+                    return val
+                candidates.append(val)
+            else:
+                nested = _extract_csv_url(val, segment)
+                if nested:
+                    return nested
+        return candidates[0] if candidates else None
+    return None
+
+
 def _norm_col(name: str) -> str:
     """Normalize a column name for matching. Kotak's scrip CSV has messy headers with trailing
     spaces and semicolons (e.g. ``dStrikePrice;``, ``lExpiryDate ``), so strip whitespace/semicolons."""
@@ -57,16 +83,20 @@ def _pick_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
     return None
 
 
+# Kotak scrip-master expiries are seconds since 1980-01-01 (the NSE NNF epoch), not the Unix epoch.
+_NNF_EPOCH = datetime(1980, 1, 1, tzinfo=UTC)
+
+
 def default_expiry_parser(value: Any) -> date | None:
-    """Parse an expiry from ISO string, dd-Mon-yyyy, or an epoch-seconds integer."""
+    """Parse an expiry from an ISO/dd-Mon-yyyy string, or Kotak's seconds-since-1980 integer."""
     if value in (None, "", "nan"):
         return None
     text = str(value).strip()
-    # numeric -> epoch seconds
+    # numeric -> seconds since 1980-01-01 (Kotak NNF epoch)
     try:
         epoch = int(float(text))
-        if epoch > 10_000:  # plausibly seconds since 1970
-            return datetime.fromtimestamp(epoch, tz=UTC).date()
+        if epoch > 10_000:
+            return (_NNF_EPOCH + timedelta(seconds=epoch)).date()
     except (ValueError, OverflowError):
         pass
     for fmt in ("%Y-%m-%d", "%d-%b-%Y", "%d-%m-%Y", "%d%b%Y", "%Y%m%d"):
@@ -99,7 +129,10 @@ class ScripMaster:
         segment: ExchangeSegment,
         *,
         expiry_parser: Callable[[Any], date | None] = default_expiry_parser,
+        strike_scale: Decimal = Decimal("1"),
     ) -> ScripMaster:
+        """Parse a scrip-master frame. ``strike_scale`` converts the raw strike to rupees — Kotak's
+        ``dStrikePrice`` is in paise, so real downloads pass 0.01 (see ``download``/``from_csv``)."""
         cols = {field: _pick_column(df, cands) for field, cands in COLUMN_CANDIDATES.items()}
         required = ["trading_symbol", "expiry", "strike", "option_type", "lot_size"]
         missing = [f for f in required if cols[f] is None]
@@ -118,7 +151,7 @@ class ScripMaster:
             if expiry is None:
                 continue
             try:
-                strike = Decimal(str(row[cols["strike"]]))
+                strike = Decimal(str(row[cols["strike"]])) * strike_scale
             except (InvalidOperation, ValueError):
                 continue
             underlying = cls._infer_underlying(
@@ -146,28 +179,46 @@ class ScripMaster:
         log.info("scrip_master_parsed", segment=segment.value, count=len(instruments))
         return cls(instruments)
 
+    # Kotak scrip-master strikes are in paise; scale to rupees for real downloads.
+    KOTAK_STRIKE_SCALE = Decimal("0.01")
+
     @classmethod
     def from_csv(cls, path: str | Path, segment: ExchangeSegment) -> ScripMaster:
         df = pd.read_csv(path)
-        return cls.from_dataframe(df, segment)
+        return cls.from_dataframe(df, segment, strike_scale=cls.KOTAK_STRIKE_SCALE)
 
     @classmethod
     def download(cls, neo_client: Any, segment: ExchangeSegment) -> ScripMaster:  # pragma: no cover
-        """Download and parse the scrip master via the Kotak SDK. Fails closed on error."""
+        """Download and parse the scrip master via the Kotak SDK. Fails closed on error.
+
+        ``scrip_master`` may return a URL string, a list of URLs, or a dict keyed by segment; we
+        extract the CSV URL for ``segment`` from any of these shapes.
+        """
         try:
-            paths = neo_client.scrip_master(exchange_segment=segment.value)
-            url = paths[0] if isinstance(paths, list) else paths
+            resp = neo_client.scrip_master(exchange_segment=segment.value)
+            url = _extract_csv_url(resp, segment.value)
+            if url is None:
+                raise ScripMasterError(
+                    f"No CSV URL in scrip_master response for {segment.value}: {str(resp)[:300]}"
+                )
             df = pd.read_csv(url)
+        except ScripMasterError:
+            raise
         except Exception as exc:  # noqa: BLE001
             raise ScripMasterError(f"Scrip master download failed for {segment.value}: {exc}") from exc
-        return cls.from_dataframe(df, segment)
+        return cls.from_dataframe(df, segment, strike_scale=cls.KOTAK_STRIKE_SCALE)
 
-    @staticmethod
-    def _infer_underlying(name: str, symbol: str) -> Underlying | None:
+    # Index-name fragments that are NOT plain NIFTY/SENSEX and must be excluded.
+    _NIFTY_EXCLUDE = ("BANK", "FIN", "MID", "NXT", "NEXT")
+
+    @classmethod
+    def _infer_underlying(cls, name: str, symbol: str) -> Underlying | None:
         blob = f"{name} {symbol}".upper()
+        if "BANKEX" in blob:
+            return None  # BSE BANKEX, not SENSEX
         if "SENSEX" in blob:
             return Underlying.SENSEX
-        if "NIFTY" in blob and "BANK" not in blob and "FIN" not in blob and "MID" not in blob:
+        if "NIFTY" in blob and not any(x in blob for x in cls._NIFTY_EXCLUDE):
             return Underlying.NIFTY
         return None
 

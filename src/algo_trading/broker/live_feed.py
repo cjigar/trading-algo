@@ -29,6 +29,22 @@ TickCallback = Callable[[Tick], None]
 OrderEventCallback = Callable[[OrderEvent], None]
 
 
+def _unwrap(message: Any) -> tuple[str, list]:
+    """Return (message_type, records) from a Kotak socket message. Handles the nested
+    ``{"type": ..., "data": [ ... ]}`` envelope as well as bare dicts/lists."""
+    if isinstance(message, dict):
+        msg_type = str(message.get("type", "")).lower()
+        payload = message.get("data")
+        if isinstance(payload, list):
+            return msg_type, payload
+        if isinstance(payload, dict):
+            return msg_type, [payload]
+        return msg_type, [message]
+    if isinstance(message, list):
+        return "", message
+    return "", []
+
+
 class LiveFeedCoordinator:
     def __init__(
         self,
@@ -92,11 +108,13 @@ class LiveFeedCoordinator:
     # -- Dispatch ----------------------------------------------------------------------
 
     def _dispatch(self, message: Any) -> None:
-        records = message if isinstance(message, list) else [message]
+        # Kotak wraps updates as {"type": "stock_feed"|"order_feed"|..., "data": [ {..}, .. ]}.
+        msg_type, records = _unwrap(message)
+        is_order = "order" in msg_type or "trade" in msg_type
         for raw in records:
             if not isinstance(raw, dict):
                 continue
-            if is_order_message(raw):
+            if is_order or is_order_message(raw):
                 self._order_feed.handle_message(raw)
             else:
                 self._feed.handle_raw(raw)
