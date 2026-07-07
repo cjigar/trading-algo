@@ -25,7 +25,7 @@ from algo_trading.execution.signal_translator import SignalTranslator
 from algo_trading.instruments.option_resolver import WeeklyOptionResolver
 from algo_trading.instruments.scrip_master import ScripMaster
 from algo_trading.observability.logging import get_logger
-from algo_trading.persistence.db import create_db_engine
+from algo_trading.persistence.db import create_engine_from_settings
 from algo_trading.persistence.repositories import Repository
 from algo_trading.risk.risk_manager import RiskManager
 from algo_trading.strategy.base import Strategy
@@ -62,7 +62,7 @@ class Orchestrator:
         self._underlying_token: dict[str, Underlying] = {}  # index token -> underlying
         self._lock = threading.RLock()
 
-        self._repo: Repository = repo or Repository(create_db_engine(self._settings.db_path))
+        self._repo: Repository = repo or Repository(create_engine_from_settings(self._settings))
 
         self._positions = PositionTracker()
         self._exits = ExitManager(self._settings)

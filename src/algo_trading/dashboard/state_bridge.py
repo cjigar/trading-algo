@@ -11,10 +11,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+from algo_trading.config.settings import Settings
 from algo_trading.domain.enums import AlgoState
 from algo_trading.domain.models import Position
 from algo_trading.execution.position_tracker import PositionTracker
-from algo_trading.persistence.db import create_db_engine
+from algo_trading.persistence.db import create_engine_from_settings
 from algo_trading.persistence.repositories import Repository
 
 
@@ -31,9 +32,10 @@ class DashboardState:
 
 
 class StateBridge:
-    def __init__(self, db_path: str) -> None:
-        # A fresh engine over the same DB file the loop writes to (separate process).
-        self._repo = Repository(create_db_engine(db_path))
+    def __init__(self, settings: Settings) -> None:
+        # A fresh engine over the SAME database the loop writes to (separate process).
+        # With Postgres both processes share the server; with SQLite they share the file.
+        self._repo = Repository(create_engine_from_settings(settings))
 
     def read_state(self) -> DashboardState:
         trades = self._repo.trades_for_day()

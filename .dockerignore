@@ -1,0 +1,38 @@
+# Secrets & local state
+.env
+*.pem
+*.key
+
+# Data / logs / caches
+data/
+logs/
+scrip_cache/
+*.db
+*.sqlite*
+
+# Python / venv / build
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# VCS / editors / OS
+.git/
+.gitignore
+.idea/
+.vscode/
+.DS_Store
+
+# Docs/specs not needed in the image
+openspec/
+.claude/

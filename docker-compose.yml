@@ -1,0 +1,67 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-algo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-algo}
+      POSTGRES_DB: ${POSTGRES_DB:-algo}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-algo} -d ${POSTGRES_DB:-algo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Not published by default — only the app services need it. Uncomment to inspect locally.
+    # ports:
+    #   - "5432:5432"
+
+  algo:
+    build:
+      context: .
+      args:
+        INSTALL_BROKER: ${INSTALL_BROKER:-0}
+    image: algo-trading:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # Overrides ALGO_DB_PATH from .env — the loop uses Postgres in containers.
+      ALGO_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-algo}:${POSTGRES_PASSWORD:-algo}@db:5432/${POSTGRES_DB:-algo}
+    volumes:
+      - ./scrip_cache:/app/scrip_cache
+      - ./logs:/app/logs
+    command: ["python", "-m", "algo_trading.entrypoints.run_algo"]
+
+  dashboard:
+    build:
+      context: .
+      args:
+        INSTALL_BROKER: ${INSTALL_BROKER:-0}
+    image: algo-trading:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      ALGO_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-algo}:${POSTGRES_PASSWORD:-algo}@db:5432/${POSTGRES_DB:-algo}
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./scrip_cache:/app/scrip_cache
+    command:
+      - streamlit
+      - run
+      - src/algo_trading/entrypoints/run_dashboard.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+
+volumes:
+  pgdata:

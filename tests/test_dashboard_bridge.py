@@ -8,13 +8,20 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from algo_trading.config.settings import get_settings
+from algo_trading.config.settings import Settings, get_settings
 from algo_trading.dashboard.state_bridge import StateBridge
 from algo_trading.domain.enums import AlgoState, Side
 from algo_trading.domain.models import Trade
 from algo_trading.persistence.db import create_db_engine
 from algo_trading.persistence.repositories import Repository
 from tests.conftest import make_instrument
+
+
+def _sqlite_settings(db_path: str) -> Settings:
+    s = get_settings(reload=True)
+    object.__setattr__(s, "database_url", "")
+    object.__setattr__(s, "db_path", db_path)
+    return s
 
 
 def test_bridge_reads_state_and_reconstructs_positions(tmp_path):
@@ -30,7 +37,7 @@ def test_bridge_reads_state_and_reconstructs_positions(tmp_path):
     loop_repo.record_pnl(Decimal("0"), Decimal("0"))
 
     # dashboard (separate process) reads via its own engine over the same file
-    bridge = StateBridge(db)
+    bridge = StateBridge(_sqlite_settings(db))
     state = bridge.read_state()
     assert state.algo_state is AlgoState.RUNNING
     assert len(state.positions) == 1
@@ -61,7 +68,7 @@ def test_bridge_control_command_reaches_orchestrator(engine, tmp_path):
     orch.start_session()
 
     # Dashboard enqueues a stop command over the shared file.
-    bridge = StateBridge(db)
+    bridge = StateBridge(_sqlite_settings(db))
     bridge.send_stop()
 
     # Orchestrator (separate engine, same file) consumes it.

@@ -6,7 +6,7 @@ A Python service that trades a **VWAP / price-action breakout** strategy on **NI
 
 ## Architecture
 
-The trading loop runs as its **own process**; the Streamlit dashboard runs **separately** and communicates with the loop through the shared SQLite database (it never holds the broker session or places orders directly).
+The trading loop runs as its **own process**; the Streamlit dashboard runs **separately** and communicates with the loop through a shared database — **SQLite** locally, **PostgreSQL** in Docker (it never holds the broker session or places orders directly).
 
 ```
 market-data feed ─┐
@@ -24,7 +24,7 @@ Package layout (`src/algo_trading/`):
 |---|---|
 | `config/` | Typed settings + secret loading |
 | `domain/` | Enums and immutable data models |
-| `persistence/` | SQLite schema + repositories (append-only audit) |
+| `persistence/` | DB schema + repositories (append-only audit; SQLite or Postgres) |
 | `broker/` | Kotak Neo client wrapper, auth/session, market-data & order websockets |
 | `instruments/` | Scrip-master ingestion + weekly-option resolver |
 | `strategy/` | Candle builder, indicators (VWAP/ATR), pluggable strategies |
@@ -51,6 +51,22 @@ The Kotak Neo SDK is **not on PyPI**; `make install-broker` pulls it from the pi
 make run         # trading loop (defaults to paper mode)
 make dashboard   # Streamlit dashboard (separate process)
 ```
+
+## Docker (Postgres + loop + dashboard)
+
+The containerized stack runs three services via Docker Compose — **`db`** (PostgreSQL), **`algo`** (trading loop), and **`dashboard`** (Streamlit) — all sharing Postgres (a better cross-process channel than the SQLite file).
+
+```bash
+cp .env.example .env       # fill Kotak creds + params; POSTGRES_* have working defaults
+mkdir -p scrip_cache       # drop nse_fo.csv / bse_fo.csv here for paper mode
+make docker-up             # build + start db, algo, dashboard  (dashboard on http://localhost:8501)
+make docker-logs           # tail algo + dashboard
+make docker-down           # stop
+```
+
+- The database is selected by `ALGO_DATABASE_URL`: Compose sets it to the Postgres service automatically; locally it's unset, so the app falls back to SQLite (`ALGO_DB_PATH`). The same code and schema run on both.
+- To bake the Kotak SDK into the image (for live mode), build with `INSTALL_BROKER=1` (env var or `--build-arg`).
+- Postgres data persists in the `pgdata` volume; `make docker-down` keeps it (`docker compose down -v` wipes it).
 
 ## Quality
 

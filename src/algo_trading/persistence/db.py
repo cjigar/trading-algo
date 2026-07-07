@@ -1,17 +1,24 @@
-"""SQLite persistence schema (SQLModel).
+"""Persistence schema (SQLModel), portable across SQLite and PostgreSQL.
 
-Monetary values are stored as strings (serialized ``Decimal``) to preserve exactness for
-the audit trail; the repository layer converts to/from ``Decimal``. Event, trade, P&L, and
-audit tables are treated as append-only by the repository layer.
+The engine is built from a SQLAlchemy URL: SQLite by default (local dev + tests), PostgreSQL
+in containers. Monetary values are stored as strings (serialized ``Decimal``) to preserve
+exactness for the audit trail; the repository layer converts to/from ``Decimal``. Event,
+trade, P&L, and audit tables are treated as append-only by the repository layer.
 """
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import Engine
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Field, SQLModel, create_engine
+
+from algo_trading.observability.logging import get_logger
+
+log = get_logger("persistence.db")
 
 
 class OrderRow(SQLModel, table=True):
@@ -130,13 +137,47 @@ class ControlCommandRow(SQLModel, table=True):
 
 
 def create_db_engine(db_path: str | Path) -> Engine:
-    """Create (and initialize) the SQLite engine at ``db_path``."""
+    """Create (and initialize) a SQLite engine at ``db_path`` (local dev / tests)."""
     path = Path(db_path)
     if path.parent and str(path.parent) not in ("", "."):
         path.parent.mkdir(parents=True, exist_ok=True)
-    engine = create_engine(
-        f"sqlite:///{path}",
-        connect_args={"check_same_thread": False},
-    )
-    SQLModel.metadata.create_all(engine)
+    return create_engine_from_url(f"sqlite:///{path}")
+
+
+def create_engine_from_url(url: str, *, create: bool = True, retries: int = 1) -> Engine:
+    """Create an engine from a SQLAlchemy URL (SQLite or PostgreSQL) and init the schema.
+
+    For PostgreSQL, ``retries`` allows waiting for the database container to accept
+    connections on first boot (docker-compose start ordering).
+    """
+    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+    engine = create_engine(url, connect_args=connect_args, pool_pre_ping=True)
+    if create:
+        _create_all_with_retry(engine, retries)
     return engine
+
+
+def create_engine_from_settings(settings, *, create: bool = True) -> Engine:
+    """Build the engine from application settings (SQLite by default, Postgres when configured)."""
+    url = settings.resolved_database_url()
+    if url.startswith("sqlite"):
+        path = Path(url.replace("sqlite:///", "", 1))
+        if path.parent and str(path.parent) not in ("", "."):
+            path.parent.mkdir(parents=True, exist_ok=True)
+    log.info("db_engine", backend="postgres" if "postgres" in url else "sqlite")
+    return create_engine_from_url(url, create=create, retries=settings.db_connect_retries)
+
+
+def _create_all_with_retry(engine: Engine, retries: int) -> None:
+    attempt = 0
+    while True:
+        try:
+            SQLModel.metadata.create_all(engine)
+            return
+        except OperationalError:
+            attempt += 1
+            if attempt > retries:
+                raise
+            wait = min(2 ** attempt, 10)
+            log.warning("db_not_ready_retrying", attempt=attempt, wait_s=wait)
+            time.sleep(wait)

@@ -18,7 +18,7 @@ def render() -> None:  # pragma: no cover - requires the Streamlit runtime
     settings = get_settings()
     st.set_page_config(page_title="Algo Trading Dashboard", layout="wide")
 
-    bridge = StateBridge(settings.db_path)
+    bridge = StateBridge(settings)
     state = bridge.read_state()
 
     # --- Mode + kill-switch banner ---

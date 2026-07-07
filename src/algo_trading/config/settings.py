@@ -33,7 +33,12 @@ class Settings(BaseSettings):
     kotak_environment: str = "prod"
 
     # --- Persistence ---
+    # Full SQLAlchemy URL (e.g. postgresql+psycopg://user:pass@db:5432/algo). When empty,
+    # a local SQLite database at db_path is used. Set ALGO_DATABASE_URL in containers.
+    database_url: str = ""
     db_path: str = "data/algo.db"
+    # Retries when connecting to the DB on startup (lets Postgres finish booting in compose).
+    db_connect_retries: int = 10
 
     # --- Instruments ---
     # NoDecode: skip pydantic-settings' JSON parsing so the comma-split validator below handles
@@ -85,6 +90,16 @@ class Settings(BaseSettings):
             hh, mm = v.split(":")[:2]
             return time(int(hh), int(mm))
         return v
+
+    def resolved_database_url(self) -> str:
+        """Return the configured database URL, or a local SQLite URL derived from db_path."""
+        if self.database_url.strip():
+            return self.database_url.strip()
+        return f"sqlite:///{self.db_path}"
+
+    @property
+    def uses_postgres(self) -> bool:
+        return "postgres" in self.resolved_database_url()
 
     @property
     def is_live(self) -> bool:

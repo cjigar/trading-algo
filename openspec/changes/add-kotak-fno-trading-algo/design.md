@@ -41,8 +41,8 @@ Use `neo_api_client` (class `NeoAPI`) from `Kotak-Neo/Kotak-neo-api-v2`, pinned 
 ### D4: Two self-managed websockets with reconnect + stale-feed halt
 `FeedHandler` (quotes/LTP) and `OrderFeedHandler` (order/trade updates) each own heartbeat, exponential-backoff reconnect, and resubscribe-on-reconnect, because the SDK's reconnect is known-buggy. A feed with no ticks for N seconds during market hours is treated as a halt condition. **Alternative:** rely on SDK auto-reconnect — rejected as unreliable.
 
-### D5: Loop and dashboard are separate processes, coupled via SQLite
-The orchestrator runs as its own process. The Streamlit dashboard reads state and writes control commands (start/stop/flatten) through a SQLite control table; it never holds the broker session or places orders. **Alternatives considered:** running the loop inside Streamlit (rejected — Streamlit reruns the script per interaction and is session-scoped); a REST API / message queue between them (rejected for v1 as over-engineering — SQLite is already the persistence layer and is sufficient for a single-operator tool). This can be revisited if the dashboard needs sub-second control latency.
+### D5: Loop and dashboard are separate processes, coupled via the shared database
+The orchestrator runs as its own process. The Streamlit dashboard reads state and writes control commands (start/stop/flatten) through a control table in the shared database; it never holds the broker session or places orders. The database is **SQLite** for local dev/tests and **PostgreSQL** for the containerized deployment — selected by `ALGO_DATABASE_URL`, with identical SQLModel schema and code on both (Postgres is a cleaner cross-process/cross-container channel than a shared SQLite file). **Alternatives considered:** running the loop inside Streamlit (rejected — Streamlit reruns the script per interaction and is session-scoped); a REST API / message queue between them (rejected for v1 as over-engineering — the DB is already the persistence layer and is sufficient for a single-operator tool). This can be revisited if the dashboard needs sub-second control latency.
 
 ### D6: Paper mode is the default and the pre-live gate
 A `MODE=paper|live` toggle routes `OrderRequest`s either to a simulated fill engine (fills at LTP/limit) or to the real `place_order`, with an identical downstream tracking path. Default is `paper`; `live` requires explicit config plus a startup confirmation. Rationale: validate the full pipeline against live data before risking capital; the shared tracking path means paper exercises the same code as live.
@@ -60,7 +60,7 @@ The time-based square-off runs on its own scheduler (`apscheduler`) and executes
 Strategy parameters live in `pydantic-settings` config. Candles are aggregated with wall-clock-aligned boundaries in IST (`zoneinfo`), and the strategy is evaluated only on candle close to avoid look-ahead/duplicate signals. **Alternative:** tick-driven evaluation — rejected due to look-ahead and double-signal risk.
 
 ### D11: Tech stack
-Python 3.11+ (3.12 recommended). Dependencies: `neo_api_client` (pinned), `pyotp`, `pydantic`+`pydantic-settings`, `pandas` (scrip-master parsing, indicators), `SQLModel` over SQLite (persistence/audit), `streamlit`, `structlog` (redacting logs), `apscheduler`, `tenacity`, `python-dotenv`. `src/`-layout, pip-installable package `algo_trading`.
+Python 3.11+ (3.12 recommended). Dependencies: `neo_api_client` (pinned, optional `broker` extra), `pyotp`, `pydantic`+`pydantic-settings`, `pandas` (scrip-master parsing, indicators), `SQLModel` over SQLite or PostgreSQL (`psycopg`, optional `postgres` extra), `streamlit`, `structlog` (redacting logs), `apscheduler`, `tenacity`, `python-dotenv`. `src/`-layout, pip-installable package `algo_trading`. Deployment: Docker + Docker Compose (Postgres `db` + `algo` loop + `dashboard`).
 
 ## Risks / Trade-offs
 

@@ -1,4 +1,5 @@
-.PHONY: install install-broker lint type test check run dashboard clean
+.PHONY: install install-broker lint type test check run dashboard clean \
+        docker-build docker-up docker-down docker-logs docker-ps
 
 install:
 	python3 -m pip install -e ".[dev]"
@@ -29,3 +30,19 @@ dashboard:
 clean:
 	rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
+
+# --- Docker (Postgres + loop + dashboard) ---
+docker-build:
+	docker compose build
+
+docker-up:
+	docker compose up -d --build
+
+docker-down:
+	docker compose down
+
+docker-logs:
+	docker compose logs -f algo dashboard
+
+docker-ps:
+	docker compose ps
