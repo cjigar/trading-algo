@@ -63,5 +63,39 @@ services:
       - --server.port=8501
       - --server.headless=true
 
+  # FastAPI backend — read/control-only over the shared Postgres (no broker session).
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: algo-api:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      ALGO_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-algo}:${POSTGRES_PASSWORD:-algo}@db:5432/${POSTGRES_DB:-algo}
+      WEB_AUTH_PASSWORD: ${WEB_AUTH_PASSWORD:-changeme}
+      WEB_AUTH_SECRET: ${WEB_AUTH_SECRET:-dev-insecure-secret-change-me}
+      WEB_CORS_ORIGINS: ${WEB_CORS_ORIGINS:-http://localhost:3000}
+    ports:
+      - "8000:8000"
+
+  # Next.js web app (replaces the Streamlit dashboard once at parity).
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8000}
+    image: algo-web:latest
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+
 volumes:
   pgdata:

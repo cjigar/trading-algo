@@ -7,6 +7,8 @@ that MUST be confirmed with the operator before live trading (see README go-live
 
 from __future__ import annotations
 
+import json
+import os
 from datetime import time
 from decimal import Decimal
 from typing import Annotated
@@ -205,12 +207,57 @@ class Settings(BaseSettings):
         ]
 
 
+# Tunable parameters the web config editor may override (NEVER secrets, mode, or live-arming).
+EDITABLE_FIELDS: frozenset[str] = frozenset({
+    "lots", "nifty_lot_size", "sensex_lot_size",
+    "allowed_weekdays", "sensex_weekdays", "market_holidays",
+    "target_points", "trail_points", "stoploss_points", "vwap_breakout_buffer",
+    "strike_window", "otm_strikes", "chain_eval_seconds",
+    "daily_loss_cap", "max_positions", "max_trades_per_day", "flatten_on_kill_switch",
+    "candle_timeframe_minutes", "strike_selection",
+})
+
+
+def overrides_path() -> str:
+    return os.getenv("ALGO_OVERRIDES_PATH", "data/overrides.json")
+
+
+def load_overrides() -> dict:
+    """Read the persisted config overrides (whitelisted tunables), if any."""
+    path = overrides_path()
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return {k: v for k, v in data.items() if k in EDITABLE_FIELDS}
+
+
+def save_overrides(updates: dict) -> Settings:
+    """Persist whitelisted override updates and return freshly-reloaded settings.
+
+    Validates by constructing Settings with the merged overrides (raises on invalid values).
+    """
+    filtered = {k: v for k, v in updates.items() if k in EDITABLE_FIELDS}
+    merged = {**load_overrides(), **filtered}
+    Settings(**merged)  # validate before writing (raises pydantic ValidationError on bad input)
+    path = overrides_path()
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(merged, f, default=str, indent=2)
+    return get_settings(reload=True)
+
+
 _settings: Settings | None = None
 
 
 def get_settings(reload: bool = False) -> Settings:
-    """Return the process-wide settings singleton."""
+    """Return the process-wide settings singleton (env + persisted config overrides)."""
     global _settings
     if _settings is None or reload:
-        _settings = Settings()
+        _settings = Settings(**load_overrides())
     return _settings

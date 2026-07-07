@@ -32,6 +32,15 @@ env/
 .coverage
 htmlcov/
 
+# Node / monorepo
+node_modules/
+.next/
+.turbo/
+out/
+dist/
+*.tsbuildinfo
+apps/web/lib/api-types.ts
+
 # OS / editor
 .DS_Store
 .idea/

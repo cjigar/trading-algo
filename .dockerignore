@@ -10,6 +10,13 @@ scrip_cache/
 *.db
 *.sqlite*
 
+# Node / monorepo
+node_modules/
+.next/
+.turbo/
+out/
+dist/
+
 # Python / venv / build
 .venv/
 venv/

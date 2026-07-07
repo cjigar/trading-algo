@@ -105,6 +105,29 @@ The message-type routing heuristic (`is_order_message`) and the exact index toke
 adjustments against your live SDK/account — both are isolated in `broker/live_feed.py` and
 `broker/order_feed.py`.
 
+## Web app (Next.js + FastAPI monorepo)
+
+A Turborepo monorepo adds a modern web UI (replacing Streamlit). Both are **read/control-only** over
+the shared DB — no broker session, no orders from the web tier.
+
+- `apps/api` — FastAPI over the existing `algo_trading` engine (state, P&L, positions, orders,
+  trades, chain, config edit, controls, SSE live stream, single-user auth). Tests: `pytest apps/api/tests`.
+- `apps/web` — Next.js (App Router + Tailwind): login, tabbed monitoring, Start/Stop/Flatten,
+  config editor, live updates via SSE.
+
+```bash
+npm install                       # installs web deps + turbo (workspaces)
+# local dev (two servers):
+uvicorn app.main:app --reload --app-dir apps/api   # API on :8000  (needs WEB_AUTH_PASSWORD)
+npm run dev -w @trading-algo/web                     # web on :3000
+# or the whole stack in Docker:
+docker compose up -d db api web                      # web → http://localhost:3000
+```
+
+Set `WEB_AUTH_PASSWORD` / `WEB_AUTH_SECRET` (and `NEXT_PUBLIC_API_BASE` for the browser). The API's
+config editor only edits whitelisted tunables (never secrets or live-arming), persisted to an
+overrides file the loop reads on reload.
+
 ## Quality
 
 ```bash

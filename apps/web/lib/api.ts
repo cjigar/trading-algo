@@ -1,0 +1,79 @@
+// Typed fetch helper against the FastAPI backend. Reads the auth token from a cookie and
+// attaches it as a Bearer header.
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
+
+export function getToken(): string | null {
+  if (typeof document === "undefined") return null;
+  const m = document.cookie.match(/(?:^|;\s*)token=([^;]+)/);
+  return m ? decodeURIComponent(m[1]!) : null;
+}
+
+export function setToken(token: string) {
+  // 12h cookie; httpOnly isn't possible from JS, acceptable for a single-user local tool.
+  document.cookie = `token=${encodeURIComponent(token)}; path=/; max-age=43200; SameSite=Lax`;
+}
+
+export function clearToken() {
+  document.cookie = "token=; path=/; max-age=0";
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getToken();
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers ?? {}),
+    },
+  });
+  if (res.status === 401) {
+    clearToken();
+    if (typeof window !== "undefined") window.location.href = "/login";
+    throw new Error("Unauthorized");
+  }
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return (await res.json()) as T;
+}
+
+export const api = {
+  base: API_BASE,
+  login: (password: string) =>
+    request<{ token: string }>("/api/login", { method: "POST", body: JSON.stringify({ password }) }),
+  state: () => request<AlgoState>("/api/state"),
+  pnl: () => request<PnL>("/api/pnl"),
+  positions: () => request<Position[]>("/api/positions"),
+  orders: () => request<Order[]>("/api/orders"),
+  trades: () => request<Trade[]>("/api/trades"),
+  chain: () => request<Chain>("/api/chain"),
+  config: () => request<Record<string, unknown>>("/api/config"),
+  saveConfig: (updates: Record<string, unknown>) =>
+    request<Record<string, unknown>>("/api/config", { method: "PUT", body: JSON.stringify({ updates }) }),
+  control: (command: "start" | "stop" | "flatten") =>
+    request<{ ok: boolean; command: string }>(`/api/control/${command}`, { method: "POST" }),
+};
+
+// Minimal hand-written types mirroring the API response models. `pnpm gen:types` can regenerate
+// a full set from the OpenAPI schema into lib/api-types.ts.
+export type AlgoState = { mode: string; live_armed: boolean; algo_state: string };
+export type SymbolPnL = {
+  symbol: string; buy_qty: number; sell_qty: number; avg_buy: number; avg_sell: number;
+  net_qty: number; realized_pnl: number;
+};
+export type PnL = {
+  total_realized: number; total_buy_value: number; total_sell_value: number;
+  trade_count: number; matched_symbols: number; open_symbols: number; per_symbol: SymbolPnL[];
+};
+export type Position = {
+  symbol: string; side: string; quantity: number; average_price: number; last_price: number;
+  unrealized_pnl: number;
+};
+export type Trade = { time: string; symbol: string; side: string; quantity: number; price: number };
+export type Order = {
+  order_id: string; symbol: string; side: string; quantity: number; filled_quantity: number;
+  price: string; order_type: string; product: string; status: string; order_time: string;
+};
+export type ChainStrike = { strike: number; ce_oi: number; ce_ltp: number; pe_oi: number; pe_ltp: number };
+export type Chain = { ce_oi_total: number; pe_oi_total: number; selected_side: string; per_strike: ChainStrike[] };
+export type StreamPayload = { state: AlgoState; pnl: PnL; chain: Chain };

@@ -1,0 +1,22 @@
+{
+  "name": "trading-algo-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Turborepo: Next.js web + FastAPI API over the algo_trading engine",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "gen:types": "turbo run gen:types"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
