@@ -18,6 +18,7 @@ from algo_trading.domain.models import Instrument, OrderEvent, OrderRequest, Tra
 from algo_trading.persistence.db import (
     AlgoStateRow,
     AuditEventRow,
+    BrokerOrderRow,
     ControlCommandRow,
     OrderEventRow,
     OrderRow,
@@ -162,6 +163,40 @@ class Repository:
                 )
             )
             session.commit()
+
+    def record_broker_order(self, fields: dict, trading_day: date | None = None) -> bool:
+        """Upsert an order from the broker's order report, keyed by order_id. Returns True if a
+        new row was inserted, False if an existing row was updated."""
+        order_id = str(fields["order_id"])
+        with Session(self._engine) as session:
+            row = session.get(BrokerOrderRow, order_id)
+            inserted = row is None
+            if row is None:
+                row = BrokerOrderRow(order_id=order_id, trading_symbol=fields["trading_symbol"],
+                                     side=fields["side"], trading_day=_today_str(trading_day))
+            row.trading_symbol = fields["trading_symbol"]
+            row.side = fields["side"]
+            row.quantity = int(fields.get("quantity", 0))
+            row.filled_quantity = int(fields.get("filled_quantity", 0))
+            row.price = str(fields.get("price", "0"))
+            row.order_type = str(fields.get("order_type", ""))
+            row.product = str(fields.get("product", ""))
+            row.status = str(fields.get("status", ""))
+            row.order_time = str(fields.get("order_time", ""))
+            row.updated_at = datetime.utcnow()
+            session.add(row)
+            session.commit()
+        return inserted
+
+    def broker_orders_for_day(self, trading_day: date | None = None) -> list[BrokerOrderRow]:
+        with Session(self._engine) as session:
+            return list(
+                session.exec(
+                    select(BrokerOrderRow).where(
+                        BrokerOrderRow.trading_day == _today_str(trading_day)
+                    )
+                )
+            )
 
     def trade_exists(self, client_tag: str) -> bool:
         with Session(self._engine) as session:

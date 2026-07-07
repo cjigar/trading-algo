@@ -35,6 +35,10 @@ validate-live:
 import-trades:
 	python -m algo_trading.tools.import_trades
 
+# Import today's order book from the Kotak account into the DB (read-only; NO orders placed).
+import-orders:
+	python -m algo_trading.tools.import_orders
+
 clean:
 	rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +

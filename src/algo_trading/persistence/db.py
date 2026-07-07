@@ -136,6 +136,26 @@ class ControlCommandRow(SQLModel, table=True):
     consumed_at: datetime | None = Field(default=None, index=True)
 
 
+class BrokerOrderRow(SQLModel, table=True):
+    """An order imported from the broker's order report (order book). Keyed by broker order id;
+    re-importing upserts the latest status/fill."""
+
+    __tablename__ = "broker_orders"
+
+    order_id: str = Field(primary_key=True)
+    trading_symbol: str
+    side: str
+    quantity: int = 0
+    filled_quantity: int = 0
+    price: str = "0"
+    order_type: str = ""
+    product: str = ""
+    status: str = Field(default="", index=True)
+    order_time: str = ""
+    trading_day: str = Field(index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 def create_db_engine(db_path: str | Path) -> Engine:
     """Create (and initialize) a SQLite engine at ``db_path`` (local dev / tests)."""
     path = Path(db_path)
