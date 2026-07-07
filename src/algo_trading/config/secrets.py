@@ -1,10 +1,11 @@
-"""Secret loading for Kotak Neo credentials (password + MPIN 2FA flow).
+"""Secret loading for Kotak Neo credentials (TOTP flow — required by the SDK).
 
-Secrets are loaded from environment / ``.env`` and are NEVER logged. ``repr``/``str`` are
-overridden to redact values so accidental logging cannot leak them.
+The Kotak Neo SDK authenticates via TOTP only: ``totp_login(mobile_number, ucc, totp)`` then
+``totp_validate(mpin)``. Required credentials: consumer key, mobile number, UCC (client code),
+a base32 TOTP secret, and MPIN. (``consumer_secret``/``pan``/``password`` are accepted for
+compatibility but are not used by this API version.)
 
-Auth model: ``login(pan|mobilenumber, password)`` then ``session_2fa(OTP=mpin)``.
-A login identifier is required — provide PAN (``KOTAK_PAN``) and/or mobile (``KOTAK_MOBILE``).
+Secrets are loaded from environment / ``.env`` and are NEVER logged; ``repr``/``str`` redact.
 """
 
 from __future__ import annotations
@@ -14,6 +15,9 @@ import os
 from dotenv import load_dotenv
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Credentials required for the TOTP login flow.
+_REQUIRED = ("consumer_key", "mobile", "ucc", "mpin", "totp_secret")
 
 
 class KotakSecrets(BaseSettings):
@@ -26,43 +30,23 @@ class KotakSecrets(BaseSettings):
     )
 
     consumer_key: SecretStr = SecretStr("")
+    mobile: SecretStr = SecretStr("")  # registered mobile, e.g. +91XXXXXXXXXX
+    ucc: SecretStr = SecretStr("")  # Unique Client Code
+    mpin: SecretStr = SecretStr("")
+    totp_secret: SecretStr = SecretStr("")  # base32 seed used to generate the 6-digit TOTP
+    # Accepted for compatibility / other SDK versions but unused by the current TOTP API:
     consumer_secret: SecretStr = SecretStr("")
-    # Login identifier — PAN and/or mobile (at least one required).
     pan: SecretStr = SecretStr("")
-    mobile: SecretStr = SecretStr("")
     password: SecretStr = SecretStr("")
-    mpin: SecretStr = SecretStr("")  # used as the session_2fa OTP value
-    # Optional: only needed if you later switch to the TOTP login flow.
-    totp_secret: SecretStr = SecretStr("")
 
     def _val(self, name: str) -> str:
         return getattr(self, name).get_secret_value().strip()
 
-    def has_login_identifier(self) -> bool:
-        return bool(self._val("pan") or self._val("mobile"))
-
     def is_complete(self) -> bool:
-        """True when every credential required for the password + MPIN flow is present."""
-        return (
-            all(self._val(f) for f in ("consumer_key", "consumer_secret", "password", "mpin"))
-            and self.has_login_identifier()
-        )
+        return all(self._val(f) for f in _REQUIRED)
 
     def missing_fields(self) -> list[str]:
-        missing = [
-            name
-            for name in ("consumer_key", "consumer_secret", "password", "mpin")
-            if not self._val(name)
-        ]
-        if not self.has_login_identifier():
-            missing.append("pan_or_mobile")
-        return missing
-
-    def login_identifier(self) -> tuple[str, str]:
-        """Return (kind, value) for login — prefers PAN, falls back to mobile."""
-        if self._val("pan"):
-            return ("pan", self._val("pan"))
-        return ("mobilenumber", self._val("mobile"))
+        return [name for name in _REQUIRED if not self._val(name)]
 
     def __repr__(self) -> str:  # never leak values
         return f"KotakSecrets(complete={self.is_complete()}, missing={self.missing_fields()})"

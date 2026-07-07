@@ -82,7 +82,7 @@ def main() -> int:  # noqa: C901 - a linear diagnostic script
     if not secrets.is_complete():
         print(f"{FAIL} credentials incomplete; missing={secrets.missing_fields()}")
         return 1
-    print(f"{PASS} credentials complete (login by {secrets.login_identifier()[0]})")
+    print(f"{PASS} credentials complete (TOTP flow: mobile + UCC + MPIN)")
 
     # --- 1. Login (login -> session_2fa) ---
     _h("1. Authentication  (login -> session_2fa)")
