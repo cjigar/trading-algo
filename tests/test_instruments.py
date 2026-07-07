@@ -50,6 +50,21 @@ def test_from_dataframe_parses_options_and_skips_futures():
     assert sm.find(Underlying.NIFTY, date(2025, 1, 30), Decimal(23000), OptionType.CE) is not None
 
 
+def test_from_dataframe_handles_messy_kotak_columns():
+    # Real Kotak scrip CSV headers have trailing spaces/semicolons (e.g. 'dStrikePrice;').
+    df = pd.DataFrame(
+        [
+            {"pTrdSymbol": "NIFTY25JAN23000CE", "pSymbol": "111", "pSymbolName": "NIFTY",
+             "pExpiryDate": "2025-01-30", "dStrikePrice;": 23000, "pOptionType": "CE",
+             "lLotSize": 75},
+        ]
+    )
+    sm = ScripMaster.from_dataframe(df, ExchangeSegment.NSE_FO)
+    assert len(sm) == 1
+    inst = sm.find(Underlying.NIFTY, date(2025, 1, 30), Decimal(23000), OptionType.CE)
+    assert inst is not None and inst.strike == Decimal(23000)
+
+
 def test_from_dataframe_fails_closed_when_no_options():
     df = pd.DataFrame(
         [{"pTrdSymbol": "NIFTYFUT", "pExpiryDate": "2025-01-30", "dStrikePrice": 0,

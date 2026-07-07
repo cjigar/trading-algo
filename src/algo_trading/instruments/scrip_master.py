@@ -11,6 +11,7 @@ The class fails closed: a parse that yields no option rows raises rather than tr
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
@@ -42,11 +43,17 @@ class ScripMasterError(RuntimeError):
     pass
 
 
+def _norm_col(name: str) -> str:
+    """Normalize a column name for matching. Kotak's scrip CSV has messy headers with trailing
+    spaces and semicolons (e.g. ``dStrikePrice;``, ``lExpiryDate ``), so strip whitespace/semicolons."""
+    return re.sub(r"[\s;]", "", str(name)).lower()
+
+
 def _pick_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
-    lower = {c.lower(): c for c in df.columns}
+    normalized = {_norm_col(c): c for c in df.columns}
     for cand in candidates:
-        if cand.lower() in lower:
-            return lower[cand.lower()]
+        if _norm_col(cand) in normalized:
+            return normalized[_norm_col(cand)]
     return None
 
 

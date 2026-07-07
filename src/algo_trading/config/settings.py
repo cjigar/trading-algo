@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     premarket_login_time: time = time(8, 45)
     stale_feed_seconds: int = 15
 
+    # --- Dashboard ---
+    dashboard_refresh_seconds: int = 30  # auto-refresh interval for the Streamlit dashboard
+
     # --- Order rate limiting & exchange limits ---
     max_orders_per_second_per_exchange: int = 10
     # Exchange freeze quantity: orders larger than this are split into multiple legs.
