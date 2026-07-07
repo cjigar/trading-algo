@@ -1,4 +1,4 @@
-.PHONY: install install-broker lint type test check run dashboard clean \
+.PHONY: install install-broker lint type test check run clean \
         docker-build docker-up docker-down docker-logs docker-ps
 
 install:
@@ -23,9 +23,6 @@ check: lint type test
 
 run:
 	python3 -m algo_trading.entrypoints.run_algo
-
-dashboard:
-	streamlit run src/algo_trading/entrypoints/run_dashboard.py
 
 # Read-only live-API validation (no orders). Requires the broker SDK + credentials + index tokens.
 validate-live:

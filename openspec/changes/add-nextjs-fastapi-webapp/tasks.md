@@ -43,4 +43,4 @@
 - [x] 6.2 Validate single-user auth — ✅ login required (redirect), 401 without token (tested), config editor exposes only whitelisted tunables (no secrets/mode/order path)
 - [~] 6.3 Confirm open questions with the operator (pnpm, uv vs pip, UI kit, editable-config whitelist, cookie vs header)
 - [x] 6.4 Run `openspec validate add-nextjs-fastapi-webapp`, all tests, lint/type across the monorepo
-- [~] 6.5 Retire the Streamlit `dashboard` service once parity is confirmed (keep as rollback until then)
+- [x] 6.5 Retired the Streamlit dashboard — removed the compose service, app.py/run_dashboard.py, the streamlit dep + algo-dashboard script + make target; kept StateBridge (the web API reuses it)

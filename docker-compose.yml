@@ -37,32 +37,6 @@ services:
       - ./logs:/app/logs
     command: ["python", "-m", "algo_trading.entrypoints.run_algo"]
 
-  dashboard:
-    build:
-      context: .
-      args:
-        INSTALL_BROKER: ${INSTALL_BROKER:-0}
-    image: algo-trading:latest
-    restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
-    env_file:
-      - .env
-    environment:
-      ALGO_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-algo}:${POSTGRES_PASSWORD:-algo}@db:5432/${POSTGRES_DB:-algo}
-    ports:
-      - "8501:8501"
-    volumes:
-      - ./scrip_cache:/app/scrip_cache
-    command:
-      - streamlit
-      - run
-      - src/algo_trading/entrypoints/run_dashboard.py
-      - --server.address=0.0.0.0
-      - --server.port=8501
-      - --server.headless=true
-
   # FastAPI backend — read/control-only over the shared Postgres (no broker session).
   api:
     build:

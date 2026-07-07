@@ -1,12 +1,12 @@
 # algo-trading
 
-A Python service that trades a **VWAP / price-action breakout** strategy on **NIFTY weekly options** (NSE F&O) and **SENSEX weekly options** (BSE F&O) through the **Kotak Neo API**, with a **Streamlit** dashboard for monitoring and control.
+A Python service that trades a **VWAP / price-action breakout** strategy on **NIFTY weekly options** (NSE F&O) and **SENSEX weekly options** (BSE F&O) through the **Kotak Neo API**, with a **Next.js + FastAPI** web app for monitoring and control (see [Web app](#web-app-nextjs--fastapi-monorepo)).
 
 > ⚠️ **Live-money system.** Paper mode is the default. Live trading places real orders and must be armed explicitly. Read the go-live checklist below before switching to `live`.
 
 ## Architecture
 
-The trading loop runs as its **own process**; the Streamlit dashboard runs **separately** and communicates with the loop through a shared database — **SQLite** locally, **PostgreSQL** in Docker (it never holds the broker session or places orders directly).
+The trading loop runs as its **own process**; the web app (`apps/api` + `apps/web`) runs **separately** and communicates with the loop through a shared database — **SQLite** locally, **PostgreSQL** in Docker (it never holds the broker session or places orders directly).
 
 ```
 market-data feed ─┐
@@ -15,7 +15,7 @@ order feed ───────┘                                             
                                                                             ▼
                                                                      SQLite (audit + control)
                                                                             ▲
-                                                                   Streamlit dashboard
+                                                              FastAPI (apps/api) ← Next.js (apps/web)
 ```
 
 Package layout (`src/algo_trading/`):
@@ -31,8 +31,11 @@ Package layout (`src/algo_trading/`):
 | `execution/` | Signal→order translation, order lifecycle, position tracking, exits, paper fills |
 | `risk/` | Lot sizing, limits, persistent daily-loss kill-switch |
 | `core/` | Event bus, orchestrator, scheduler |
-| `dashboard/` | Streamlit UI + state/control bridge |
-| `entrypoints/` | `run_algo`, `run_dashboard` |
+| `dashboard/` | `StateBridge` — read state + write control commands (shared by the web API) |
+| `entrypoints/` | `run_algo`, `run_capture` |
+| `reporting.py` | fills P&L + option-chain summaries (used by the web API) |
+
+The web UI lives in the Turborepo (`apps/api` FastAPI + `apps/web` Next.js) — see [Web app](#web-app-nextjs--fastapi-monorepo).
 
 ## Setup
 
@@ -49,18 +52,19 @@ The Kotak Neo SDK is **not on PyPI**; `make install-broker` pulls it from the pi
 
 ```bash
 make run         # trading loop (defaults to paper mode)
-make dashboard   # Streamlit dashboard (separate process)
 ```
 
-## Docker (Postgres + loop + dashboard)
+For the monitoring/control UI, see [Web app](#web-app-nextjs--fastapi-monorepo).
 
-The containerized stack runs three services via Docker Compose — **`db`** (PostgreSQL), **`algo`** (trading loop), and **`dashboard`** (Streamlit) — all sharing Postgres (a better cross-process channel than the SQLite file).
+## Docker (Postgres + loop + web app)
+
+The containerized stack runs via Docker Compose — **`db`** (PostgreSQL), **`algo`** (trading loop), **`api`** (FastAPI), and **`web`** (Next.js) — all sharing Postgres.
 
 ```bash
 cp .env.example .env       # fill Kotak creds + params; POSTGRES_* have working defaults
 mkdir -p scrip_cache       # drop nse_fo.csv / bse_fo.csv here for paper mode
-make docker-up             # build + start db, algo, dashboard  (dashboard on http://localhost:8501)
-make docker-logs           # tail algo + dashboard
+make docker-up             # build + start db, algo  (add: docker compose up -d api web  →  http://localhost:3001)
+make docker-logs           # tail algo
 make docker-down           # stop
 ```
 

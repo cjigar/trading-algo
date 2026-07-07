@@ -17,7 +17,6 @@ dependencies = [
     "pydantic-settings>=2.2",
     "pandas>=2.2",
     "sqlmodel>=0.0.16",
-    "streamlit>=1.33",
     "structlog>=24.1",
     "apscheduler>=3.10",
     "tenacity>=8.2",
@@ -43,7 +42,6 @@ dev = [
 
 [project.scripts]
 algo-run = "algo_trading.entrypoints.run_algo:main"
-algo-dashboard = "algo_trading.entrypoints.run_dashboard:main"
 algo-capture = "algo_trading.entrypoints.run_capture:main"
 
 [tool.setuptools.packages.find]
