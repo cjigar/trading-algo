@@ -43,7 +43,7 @@
 ## 7. Dashboard & confirmation
 
 - [x] 7.1 Add an "Option Chain" view/tab: latest OI/LTP per strike (ATM ±5, CE/PE) and the current CE-vs-PE OI aggregate + selected side
-- [~] 7.2 Verify OI/LTP capture and chain persistence live in paper mode — **NEEDS OPERATOR + live feed** (`STRATEGY=oi_selling` with credentials; watch the Option Chain tab)
+- [~] 7.2 Verify OI/LTP capture and chain persistence live — **read-only capture-only mode built** (`make capture` / `run_capture`: live feed → DB, no strategy, no orders). **NEEDS OPERATOR to run during market hours** and watch the Option Chain tab.
 - [x] 7.3 Confirm the OI quote source with the live Kotak API — ✅ **RESOLVED live**: OI streams on the websocket as `oi` (token=`tk`, volume=`v`); messages nest under `{type, data:[...]}` (now unwrapped by `_unwrap`). REST `quotes(quote_type='all')` also carries it as `open_int` (fallback). No poll needed.
 - [~] 7.4 Confirm exact parameters with the operator (window, OTM offset, eval cadence, VWAP-cross confirmation, square-off time, lots, margin buffer, holiday list) — **NEEDS OPERATOR**. All wired as `ALGO_*` config placeholders
 - [x] 7.5 Run `openspec validate add-oi-option-selling-strategy` + full test suite; ensure ruff + mypy pass — ✅ ruff + mypy clean, 116 tests pass, openspec valid

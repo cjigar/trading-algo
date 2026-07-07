@@ -68,6 +68,20 @@ make docker-down           # stop
 - To bake the Kotak SDK into the image (for live mode), build with `INSTALL_BROKER=1` (env var or `--build-arg`).
 - Postgres data persists in the `pgdata` volume; `make docker-down` keeps it (`docker compose down -v` wipes it).
 
+## Option-chain capture (read-only, no orders)
+
+To validate live OI/LTP capture **without any risk**, run capture-only mode. It authenticates,
+streams the NIFTY ATM±5 option chain into the DB (and the dashboard's ⛓️ Option Chain tab), and
+**never evaluates the strategy or places an order** (a PaperBroker is wired as a hard guard):
+
+```bash
+# requires the SDK + credentials + ALGO_NIFTY_INDEX_TOKEN; run during market hours (09:15–15:30 IST)
+docker compose run --rm algo python -m algo_trading.entrypoints.run_capture   # or: make capture
+```
+
+Watch the dashboard's Option Chain tab fill with real per-strike OI/LTP and the CE-vs-PE aggregate.
+This is the safe way to validate the OI feed before ever arming shorts.
+
 ## Live market-data feed
 
 In live mode the loop connects the Kotak websockets. `LiveFeedCoordinator` (`broker/live_feed.py`)

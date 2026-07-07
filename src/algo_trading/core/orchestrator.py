@@ -200,6 +200,16 @@ class Orchestrator:
         """True if the live quote feed has gone stale (used as a halt condition)."""
         return self._coordinator is not None and self._coordinator.is_stale()
 
+    def flush_snapshots(self) -> int:
+        """Flush any buffered option-chain snapshots to the DB (OI mode). Returns rows written."""
+        if self._oi_mode and self._writer is not None:
+            return self._writer.flush()
+        return 0
+
+    @property
+    def is_oi_mode(self) -> bool:
+        return self._oi_mode
+
     # -- Tick handling -----------------------------------------------------------------
 
     def _handle_tick(self, tick: Tick) -> None:

@@ -44,6 +44,7 @@ dev = [
 [project.scripts]
 algo-run = "algo_trading.entrypoints.run_algo:main"
 algo-dashboard = "algo_trading.entrypoints.run_dashboard:main"
+algo-capture = "algo_trading.entrypoints.run_capture:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

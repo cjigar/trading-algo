@@ -39,6 +39,10 @@ import-trades:
 import-orders:
 	python -m algo_trading.tools.import_orders
 
+# Capture the live NIFTY option chain (OI/LTP) into the DB — NO strategy, NO orders.
+capture:
+	python -m algo_trading.entrypoints.run_capture
+
 clean:
 	rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
