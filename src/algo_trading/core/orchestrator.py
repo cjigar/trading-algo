@@ -76,8 +76,9 @@ class Orchestrator:
         self._translator = SignalTranslator(self._settings, self._resolver)
 
         self._oi_mode = self._settings.strategy == "oi_selling"
-        self._chain: Any = None  # OptionChainManager (OI mode)
         self._short_tokens: dict[str, Any] = {}  # option token -> Instrument (open shorts)
+        self._oi_chains: dict[Underlying, Any] = {}  # underlying -> OptionChainManager
+        self._oi_strategies: dict[Underlying, Any] = {}  # underlying -> OiSellingStrategy
         if self._oi_mode:
             from algo_trading.feed.option_chain import OptionChainManager
             from algo_trading.persistence.snapshot_writer import SnapshotWriter
@@ -88,11 +89,15 @@ class Orchestrator:
                 flush_seconds=float(self._settings.snapshot_min_interval_seconds) or 2.0,
                 min_interval_seconds=float(self._settings.snapshot_min_interval_seconds),
             )
-            self._chain = OptionChainManager(
-                self._settings, self._resolver,
-                subscribe=self._subscribe_option, snapshot_writer=self._writer,
-            )
-            self._strategy: Any = strategy or OiSellingStrategy(self._settings, self._chain)
+            # One chain manager + strategy per configured underlying (each gated to its own days).
+            for u in self._settings.oi_underlyings:
+                chain = OptionChainManager(
+                    self._settings, self._resolver, subscribe=self._subscribe_option,
+                    snapshot_writer=self._writer, underlying=u,
+                )
+                self._oi_chains[u] = chain
+                self._oi_strategies[u] = OiSellingStrategy(self._settings, chain, underlying=u)
+            self._strategy: Any = None  # not used in OI mode
         else:
             self._strategy = strategy or VwapBreakoutStrategy(self._settings)
 
@@ -158,7 +163,11 @@ class Orchestrator:
 
     def start_session(self) -> AlgoState:
         state = self._risk.start_session()
-        self._strategy.on_session_start()
+        if self._oi_mode:
+            for strat in self._oi_strategies.values():
+                strat.on_session_start()
+        else:
+            self._strategy.on_session_start()
         self._orders.reconcile()
         log.info("session_started", state=state.value, mode=self._settings.mode.value)
         return state
@@ -219,11 +228,15 @@ class Orchestrator:
         underlying = self._underlying_token.get(tick.instrument_token)
 
         if self._oi_mode:
-            # Route to the option-chain manager (index -> ATM window; option -> OI/LTP/VWAP capture).
+            # Route to the per-underlying chain manager (index -> its ATM window; option -> all
+            # chains, each ignores tokens outside its window).
             if underlying is not None:
-                self._chain.on_index_tick(tick)
+                chain = self._oi_chains.get(underlying)
+                if chain is not None:
+                    chain.on_index_tick(tick)
             else:
-                self._chain.on_option_tick(tick)
+                for chain in self._oi_chains.values():
+                    chain.on_option_tick(tick)
                 self._evaluate_short_vwap_exit(tick.instrument_token, tick.ltp)
         else:
             # Candle path for the VWAP-breakout strategy.
@@ -242,7 +255,8 @@ class Orchestrator:
         inst = self._short_tokens.get(token)
         if inst is None:
             return
-        vwap = self._chain.vwap_for(token) if self._chain else None
+        chain = self._oi_chains.get(inst.underlying)
+        vwap = chain.vwap_for(token) if chain is not None else None
         reason = self._exits.evaluate_short_vwap(inst.trading_symbol, ltp, vwap)
         if reason is not None:
             self._flatten_short(inst, ltp, reason.value)
@@ -253,13 +267,17 @@ class Orchestrator:
             self._handle_signal(signal)
 
     def evaluate_oi(self, now: Any = None) -> None:
-        """Run the OI strategy once (called on a timer). No-op outside OI mode / when halted."""
+        """Run each underlying's OI strategy once (called on a timer). No-op outside OI mode /
+        when halted. Each strategy self-gates to its own weekdays (NIFTY Fri/Mon/Tue, SENSEX
+        Wed/Thu), so only the day's underlying produces signals."""
         if not self._oi_mode or self._risk.is_halted():
             return
         from datetime import datetime
 
-        for signal in self._strategy.evaluate(now or datetime.now(UTC)):
-            self._handle_short_signal(signal)
+        when = now or datetime.now(UTC)
+        for strat in self._oi_strategies.values():
+            for signal in strat.evaluate(when):
+                self._handle_short_signal(signal)
 
     def _handle_short_signal(self, signal: Signal) -> None:
         decision = self._risk.check_entry(signal)

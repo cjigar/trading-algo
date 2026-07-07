@@ -49,7 +49,7 @@ class OptionChainManager:
         self._subscribe = subscribe or (lambda _t, _s: None)
         self._writer = snapshot_writer
         self._underlying = underlying
-        self._step = settings.strike_step
+        self._step = settings.strike_step_for(underlying)
         self._window = settings.strike_window
         self._hysteresis = self._step * Decimal("0.2")
 

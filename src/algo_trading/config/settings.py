@@ -65,15 +65,19 @@ class Settings(BaseSettings):
     stoploss_points: Decimal = Decimal("15")
 
     # --- OI selling strategy (PLACEHOLDERS — confirm before live) ---
+    # Underlyings the OI strategy trades (each gated to its own weekdays below).
+    oi_underlyings: Annotated[list[Underlying], NoDecode] = Field(default_factory=lambda: [Underlying.NIFTY])
     strike_window: int = 5  # strikes each side of ATM to subscribe/aggregate
     otm_strikes: int = 3  # strikes OTM to sell (CE=ATM+3, PE=ATM-3)
     strike_step: Decimal = Decimal("50")  # NIFTY strike interval
+    sensex_strike_step: Decimal = Decimal("100")  # SENSEX strike interval
     chain_eval_seconds: int = 30  # cadence for OI evaluation
     snapshot_min_interval_seconds: int = 2  # min gap between persisted snapshots per token
     chain_retention_days: int = 30  # prune option-chain snapshots older than this
     margin_buffer: Decimal = Decimal("0")  # fraction of extra margin headroom required
-    # Weekdays the OI strategy may take entries (Mon=0 … Sun=6). Default Fri, Mon, Tue.
-    allowed_weekdays: Annotated[list[int], NoDecode] = Field(default_factory=lambda: [4, 0, 1])
+    # Weekdays each underlying may take entries (Mon=0 … Sun=6).
+    allowed_weekdays: Annotated[list[int], NoDecode] = Field(default_factory=lambda: [4, 0, 1])  # NIFTY: Fri,Mon,Tue
+    sensex_weekdays: Annotated[list[int], NoDecode] = Field(default_factory=lambda: [2, 3])  # SENSEX: Wed,Thu
     # NSE trading holidays (ISO dates) on which the strategy takes no entries. Operator-supplied.
     market_holidays: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
@@ -101,14 +105,14 @@ class Settings(BaseSettings):
     # PLACEHOLDER — confirm the current per-underlying freeze qty with the exchange/operator.
     freeze_quantity: int = 1800
 
-    @field_validator("underlyings", mode="before")
+    @field_validator("underlyings", "oi_underlyings", mode="before")
     @classmethod
     def _split_underlyings(cls, v: object) -> object:
         if isinstance(v, str):
             return [item.strip().upper() for item in v.split(",") if item.strip()]
         return v
 
-    @field_validator("allowed_weekdays", mode="before")
+    @field_validator("allowed_weekdays", "sensex_weekdays", mode="before")
     @classmethod
     def _parse_weekdays(cls, v: object) -> object:
         if not isinstance(v, str):
@@ -142,6 +146,14 @@ class Settings(BaseSettings):
         return (
             self.nifty_index_token if underlying is Underlying.NIFTY else self.sensex_index_token
         ).strip()
+
+    def strike_step_for(self, underlying: Underlying) -> Decimal:
+        """Strike interval per underlying (NIFTY 50, SENSEX 100)."""
+        return self.strike_step if underlying is Underlying.NIFTY else self.sensex_strike_step
+
+    def weekdays_for(self, underlying: Underlying) -> list[int]:
+        """Weekdays this underlying may take entries (NIFTY Fri/Mon/Tue, SENSEX Wed/Thu)."""
+        return self.allowed_weekdays if underlying is Underlying.NIFTY else self.sensex_weekdays
 
     def resolved_database_url(self) -> str:
         """Return the configured database URL, or a local SQLite URL derived from db_path."""

@@ -43,7 +43,7 @@ class OiSellingStrategy:
         local = now.astimezone(IST)
         if local.date() in self._holidays:
             return False
-        return local.weekday() in set(self._settings.allowed_weekdays)
+        return local.weekday() in set(self._settings.weekdays_for(self._underlying))
 
     def on_session_start(self) -> None:
         self._chain.reset_session()
@@ -59,7 +59,7 @@ class OiSellingStrategy:
         if ce_oi == pe_oi:
             return []  # no dominant side
 
-        step = self._settings.strike_step
+        step = self._settings.strike_step_for(self._underlying)
         offset = Decimal(self._settings.otm_strikes) * step
         if ce_oi > pe_oi:
             option_type = OptionType.CE

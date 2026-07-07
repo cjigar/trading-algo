@@ -1,15 +1,19 @@
 ## ADDED Requirements
 
-### Requirement: Trading-day gating
-The strategy SHALL take entries only on **Friday, Monday, and Tuesday** (IST). On any other weekday it SHALL NOT open new positions; the option-chain feed MAY continue to run and persist data.
+### Requirement: Per-underlying trading-day gating
+The strategy SHALL run **per underlying**, each with its own trading days, strike step, and index token. **NIFTY** takes entries only on **Friday, Monday, and Tuesday**; **SENSEX** only on **Wednesday and Thursday** (IST). On a disallowed day for an underlying it SHALL NOT open positions for it; the option-chain feed MAY continue to run and persist data for all underlyings.
 
-#### Scenario: Allowed day
+#### Scenario: NIFTY allowed day
 - **WHEN** it is a Friday, Monday, or Tuesday during market hours
-- **THEN** the strategy is permitted to evaluate and open a position
+- **THEN** the NIFTY strategy may evaluate and open a position, and the SENSEX strategy does not
 
-#### Scenario: Disallowed day
-- **WHEN** it is a Wednesday or Thursday
-- **THEN** the strategy opens no new positions (data capture may still run)
+#### Scenario: SENSEX allowed day
+- **WHEN** it is a Wednesday or Thursday during market hours
+- **THEN** the SENSEX strategy may evaluate and open a position, and the NIFTY strategy does not
+
+#### Scenario: Per-underlying strike step
+- **WHEN** resolving strikes for SENSEX vs NIFTY
+- **THEN** the SENSEX strike step is 100 and the NIFTY strike step is 50
 
 ### Requirement: OI aggregation and sell-side selection
 The strategy SHALL aggregate the total CE-side Open Interest and the total PE-side Open Interest across the ATM ±5 strike window, and SHALL select the side with the **higher aggregate OI** as the side to SELL (short). If the two aggregates are equal, no signal is produced.

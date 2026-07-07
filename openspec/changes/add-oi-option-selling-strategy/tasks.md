@@ -48,3 +48,10 @@
 - [~] 7.4 Confirm exact parameters with the operator (window, OTM offset, eval cadence, VWAP-cross confirmation, square-off time, lots, margin buffer, holiday list) — **NEEDS OPERATOR**. All wired as `ALGO_*` config placeholders
 - [x] 7.5 Run `openspec validate add-oi-option-selling-strategy` + full test suite; ensure ruff + mypy pass — ✅ ruff + mypy clean, 116 tests pass, openspec valid
 - [~] 7.6 Validate short entry/exit + time square-off in paper mode across Fri/Mon/Tue, then go live — **OPERATOR go-live step** (small lots + conservative kill-switch)
+
+## 8. Multi-underlying (SENSEX) extension
+
+- [x] 8.1 Per-underlying OI config: `oi_underlyings`, `sensex_weekdays` (Wed/Thu), `sensex_strike_step` (100); `weekdays_for`/`strike_step_for` helpers
+- [x] 8.2 Strategy + chain manager derive weekdays/step from the underlying; orchestrator builds one chain+strategy per underlying and routes ticks; each self-gates to its days
+- [x] 8.3 Look up index tokens live: NIFTY=26000 (nse_cm), SENSEX=1 (bse_cm); set in .env / .env.example
+- [x] 8.4 Tests: SENSEX shorts Wed/Thu at step-100 strikes; orchestrator trades only the day's underlying; both chains captured. 126 tests pass; ruff + mypy clean
