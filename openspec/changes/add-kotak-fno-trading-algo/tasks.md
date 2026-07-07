@@ -21,7 +21,7 @@
 ## 4. Broker connectivity (Kotak Neo)
 
 - [x] 4.1 Implement `broker/kotak_client.py` wrapper (only importer of `neo_api_client`): place/modify/cancel order, positions, limits, order/trade reports; typed↔string conversion; `nse_fo`/`bse_fo` selection; `tenacity` retries; ≤10 orders/sec/exchange throttle
-- [x] 4.2 Implement `broker/auth.py` `SessionManager`: `totp_login`→`totp_validate` using `pyotp`; pre-market re-login schedule; mid-session expiry re-auth preserving state
+- [x] 4.2 Implement `broker/auth.py` `SessionManager`: `login(pan|mobile, password)`→`session_2fa(OTP=mpin)` (password flow, per operator's account); pre-market re-login schedule; mid-session expiry re-auth preserving state; SDK calls isolated for version differences; TOTP variant retained as an option
 - [x] 4.3 Implement `broker/market_data.py` `FeedHandler`: quote websocket subscribe, heartbeat, backoff reconnect + resubscribe, `Tick` normalization, stale-feed detection
 - [x] 4.4 Implement `broker/order_feed.py` `OrderFeedHandler`: subscribe to order feed, normalize order/trade updates into `OrderEvent`s
 - [~] 4.5 Integration test against Kotak (paper/limits calls only): login flow, feed subscribe, reconnect/resubscribe behavior — **BLOCKED (needs real Kotak credentials + SDK)**. Logic is unit-tested with a fake NeoAPI (`tests/test_broker.py`: param conversion, rejection classification, throttle, tick/order-event normalization, stale-feed). Live login/feed/reconnect verification is deferred to the operator (see task 11.3).
@@ -74,6 +74,6 @@
 
 - [~] 11.1 Confirm exact strategy parameters with the operator (VWAP breakout definition/buffer, timeframe, strike offset, target/trail/SL points, square-off time, lots, daily-loss cap, max trades/day, product type MIS vs NRML, flatten-on-kill-switch) and load into config — **NEEDS OPERATOR**. All parameters are wired as config in `config/settings.py` / `.env.example` with placeholder defaults; set real values in `.env` before live.
 - [x] 11.2 Run `openspec validate add-kotak-fno-trading-algo` and the full test suite; ensure lint/type checks pass — ✅ ruff clean, mypy clean, 60 tests pass, openspec valid
-- [~] 11.3 Register the TOTP secret; verify pre-market login, scrip-master download, and startup reconciliation in paper mode — **NEEDS OPERATOR + Kotak credentials/SDK** (`make install-broker`, fill `.env`, place scrip-master CSVs in `scrip_cache/` or run live)
+- [~] 11.3 Fill credentials (PAN/mobile + password + MPIN); verify pre-market login, scrip-master download, and startup reconciliation in paper mode — **NEEDS OPERATOR + Kotak credentials/SDK** (`make install-broker`, fill `.env`, place scrip-master CSVs in `scrip_cache/` or run live)
 - [~] 11.4 Validate kill-switch and independent square-off behavior in paper mode across multiple sessions — logic is unit/integration-tested; **multi-session live validation needs the operator**
 - [~] 11.5 Go live with small fixed lot size and conservative daily-loss cap; monitor via dashboard; document the go-live checklist and paper↔live rollback — **OPERATOR go-live step** (checklist documented in `README.md`)

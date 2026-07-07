@@ -1,14 +1,14 @@
 ## ADDED Requirements
 
-### Requirement: Kotak Neo TOTP authentication
-The system SHALL authenticate to the Kotak Neo API using the TOTP-first flow, obtaining a view token via `totp_login` and a trade token via `totp_validate`, and SHALL generate the TOTP code from a configured secret without manual entry. Orders MUST NOT be placed before a valid trade token is held.
+### Requirement: Kotak Neo authentication
+The system SHALL authenticate to the Kotak Neo API using the password flow, obtaining a view token via `login` (with a PAN or mobile identifier plus password) and a trade token via `session_2fa` (using the MPIN). Orders MUST NOT be placed before a valid trade token is held. The SDK login calls SHALL be isolated so the flow can be adapted to SDK-version differences or switched to a TOTP variant.
 
-#### Scenario: Successful unattended login
-- **WHEN** the service starts with valid consumer key/secret, mobile, UCC, MPIN, and TOTP secret
-- **THEN** the system performs `totp_login` then `totp_validate` and holds a valid trade token enabling order placement
+#### Scenario: Successful login
+- **WHEN** the service starts with valid consumer key/secret, a login identifier (PAN or mobile), password, and MPIN
+- **THEN** the system performs `login` then `session_2fa` and holds a valid trade token enabling order placement
 
 #### Scenario: Missing or invalid credentials
-- **WHEN** any required credential is missing or authentication fails
+- **WHEN** any required credential (consumer key/secret, login identifier, password, or MPIN) is missing or authentication fails
 - **THEN** the system SHALL NOT arm order placement, SHALL log a redacted error, and SHALL surface an unauthenticated state to the orchestrator
 
 ### Requirement: Daily session lifecycle and re-authentication

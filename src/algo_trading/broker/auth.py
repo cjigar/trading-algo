@@ -1,17 +1,20 @@
-"""Kotak Neo session/auth management (TOTP-first).
+"""Kotak Neo session/auth management (password + MPIN 2FA flow).
 
-Performs the two-step v2 flow: ``totp_login(mobile, ucc, totp)`` -> view token, then
-``totp_validate(mpin)`` -> trade token (required for orders). The TOTP code is generated
-from a stored base32 secret via ``pyotp`` so login is unattended. Sessions are daily; the
+Performs the login flow: ``login(pan|mobilenumber, password)`` -> view token, then
+``session_2fa(OTP=mpin)`` -> trade token (required for orders). Sessions are daily; the
 manager supports pre-market re-login and on-demand re-authentication after token expiry.
+
+Note: the exact SDK kwarg names can vary slightly between Kotak Neo SDK versions. The two SDK
+calls are isolated in ``_do_login``/``_do_2fa`` so they are the only places to adjust if your
+installed SDK differs. If your account requires a dynamic OTP delivered to your phone (rather
+than accepting the MPIN as the 2FA value), unattended login is not possible — switch to the
+TOTP flow instead.
 """
 
 from __future__ import annotations
 
 import threading
 from typing import Any
-
-import pyotp
 
 from algo_trading.broker.base import AuthError
 from algo_trading.broker.kotak_client import _load_neo_api
@@ -42,14 +45,8 @@ class SessionManager:
             raise AuthError("Not authenticated. Call login() first.")
         return self._neo
 
-    def _current_totp(self) -> str:
-        secret = self._secrets.totp_secret.get_secret_value().strip()
-        if not secret:
-            raise AuthError("KOTAK_TOTP_SECRET is not set.")
-        return pyotp.TOTP(secret).now()
-
     def login(self) -> Any:
-        """Perform the full TOTP login -> validate flow and return the authenticated client."""
+        """Perform the full login -> session_2fa flow and return the authenticated client."""
         with self._lock:
             if not self._secrets.is_complete():
                 raise AuthError(f"Missing Kotak credentials: {self._secrets.missing_fields()}")
@@ -63,22 +60,27 @@ class SessionManager:
                 neo_fin_key=None,
             )
 
-            totp = self._current_totp()
-            register_secret(totp)
-            login_resp = neo.totp_login(
-                mobilenumber=self._secrets.mobile.get_secret_value(),
-                ucc=self._secrets.ucc.get_secret_value(),
-                totp=totp,
-            )
+            login_resp = self._do_login(neo)
             self._register_tokens(login_resp)
 
-            validate_resp = neo.totp_validate(mpin=self._secrets.mpin.get_secret_value())
+            validate_resp = self._do_2fa(neo)
             self._register_tokens(validate_resp)
 
             self._neo = neo
             self._authenticated = True
             log.info("kotak_login_ok", environment=self._settings.kotak_environment)
             return neo
+
+    def _do_login(self, neo: Any) -> Any:
+        """Call the SDK login with PAN (preferred) or mobile + password."""
+        kind, value = self._secrets.login_identifier()
+        password = self._secrets.password.get_secret_value()
+        log.info("kotak_login_attempt", identifier_kind=kind)
+        return neo.login(**{kind: value, "password": password})
+
+    def _do_2fa(self, neo: Any) -> Any:
+        """Complete 2FA using the MPIN as the OTP value."""
+        return neo.session_2fa(OTP=self._secrets.mpin.get_secret_value())
 
     def relogin(self) -> Any:
         """Force a fresh login (used pre-market and after mid-session token expiry)."""

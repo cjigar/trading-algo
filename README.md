@@ -62,7 +62,7 @@ make check       # ruff + mypy + pytest
 
 1. `make check` is green; unit + paper-mode integration behavior validated.
 2. Exact strategy parameters confirmed and set in `.env` (see the `ALGO_*` placeholders).
-3. TOTP secret registered; pre-market login, scrip-master download, and startup reconciliation verified in **paper** mode.
+3. Credentials filled (consumer key/secret, PAN or mobile, password, MPIN); pre-market login, scrip-master download, and startup reconciliation verified in **paper** mode.
 4. Kill-switch (daily-loss cap) and the independent square-off timer validated in paper mode across multiple sessions.
 5. Set `ALGO_MODE=live` **and** `ALGO_CONFIRM_LIVE=YES`, start with a **small fixed lot size** and a **conservative daily-loss cap**, and monitor via the dashboard.
 6. Rollback = set `ALGO_MODE=paper` and/or trigger the kill-switch / manual flatten from the dashboard.

@@ -5,7 +5,7 @@ There is no automated way to trade the user's intended F&O strategy — a VWAP /
 ## What Changes
 
 - Introduce a new Python application (`src/algo_trading/`, src-layout, pip-installable) — the repository currently has no application code.
-- **Kotak Neo integration**: TOTP-first session/auth (daily re-login), an order/positions client wrapper, and two websocket feeds (quotes + order/trade updates) with self-managed reconnect/resubscribe.
+- **Kotak Neo integration**: password + MPIN session/auth (daily re-login), an order/positions client wrapper, and two websocket feeds (quotes + order/trade updates) with self-managed reconnect/resubscribe.
 - **Weekly-option resolution**: download and parse the daily scrip master to resolve NIFTY (`nse_fo`) and SENSEX (`bse_fo`) weekly-option trading symbols, tokens, and lot sizes.
 - **Strategy engine**: build clock-aligned candles, compute session-anchored VWAP + breakout indicators, and emit entry signals through a pluggable strategy interface.
 - **Order execution & tracking**: translate signals into option orders, run an idempotent order lifecycle (with freeze-quantity splitting and an OPS throttle), and track live positions and realized/unrealized P&L.
@@ -34,5 +34,5 @@ There is no automated way to trade the user's intended F&O strategy — a VWAP /
 - **New code**: the entire `src/algo_trading/` package and two entrypoints (`run_algo.py`, `run_dashboard.py`). No existing code is modified (greenfield).
 - **Dependencies**: `neo_api_client` (installed from a pinned Kotak GitHub tag — not on PyPI), `pyotp`, `pydantic`/`pydantic-settings`, `pandas`, `SQLModel`, `streamlit`, `structlog`, `apscheduler`, `tenacity`, `python-dotenv`. Python 3.11+.
 - **External systems**: live Kotak Neo trading API (real orders, real money) and its websocket feeds; NSE/BSE F&O segments.
-- **Secrets/ops**: requires Kotak consumer key/secret, mobile, UCC, MPIN, and a registered TOTP secret, loaded from `.env`/keyring and never logged. Daily pre-market re-login is required.
+- **Secrets/ops**: requires Kotak consumer key/secret, a login identifier (PAN or mobile), password, and MPIN, loaded from `.env`/keyring and never logged. Daily pre-market re-login is required.
 - **Risk**: this is a live-money system — safety is gated by paper-mode default, the daily-loss kill-switch, idempotent order handling, and an independent square-off timer.
