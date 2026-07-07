@@ -70,9 +70,11 @@ class SessionManager:
 
             login_resp = self._do_login(neo)
             self._register_tokens(login_resp)
+            self._check_auth_response(login_resp, "totp_login")
 
             validate_resp = self._do_2fa(neo)
             self._register_tokens(validate_resp)
+            self._check_auth_response(validate_resp, "totp_validate")
 
             self._neo = neo
             self._authenticated = True
@@ -80,13 +82,27 @@ class SessionManager:
             return neo
 
     def _build_client(self, neo_cls: Any) -> Any:
-        """Construct NeoAPI with the NEO-app access token + static neo_fin_key (per Kotak docs)."""
+        """Construct NeoAPI. The SDK sends ``consumer_key`` as the login Authorization header,
+        so the NEO-app access token must be passed there (its naming is misleading)."""
         return neo_cls(
             environment=self._settings.kotak_environment,
-            access_token=self._secrets.access_token.get_secret_value(),
+            access_token=None,  # not used by the TOTP login; session token is set post-validate
             neo_fin_key=self._settings.kotak_neo_fin_key,
-            consumer_key=self._secrets.consumer_key.get_secret_value() or None,
+            consumer_key=self._secrets.access_token.get_secret_value(),
         )
+
+    @staticmethod
+    def _check_auth_response(resp: Any, step: str) -> None:
+        """Raise AuthError if a login/validate response is an error rather than a token."""
+        if isinstance(resp, dict):
+            if resp.get("error"):
+                raise AuthError(f"{step} failed: {resp['error']}")
+            data = resp.get("data")
+            if isinstance(data, dict) and data.get("token"):
+                return
+            if resp.get("status") == "error" or resp.get("Error"):
+                raise AuthError(f"{step} failed: {resp}")
+        raise AuthError(f"{step} did not return a token: {resp!r}")
 
     def _do_login(self, neo: Any) -> Any:
         totp = self._current_totp()
