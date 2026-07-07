@@ -46,7 +46,8 @@ export const api = {
   positions: () => request<Position[]>("/api/positions"),
   orders: () => request<Order[]>("/api/orders"),
   trades: () => request<Trade[]>("/api/trades"),
-  chain: () => request<Chain>("/api/chain"),
+  chain: (underlying?: string) =>
+    request<Chain>(`/api/chain${underlying ? `?underlying=${encodeURIComponent(underlying)}` : ""}`),
   config: () => request<Record<string, unknown>>("/api/config"),
   saveConfig: (updates: Record<string, unknown>) =>
     request<Record<string, unknown>>("/api/config", { method: "PUT", body: JSON.stringify({ updates }) }),
@@ -56,7 +57,10 @@ export const api = {
 
 // Minimal hand-written types mirroring the API response models. `pnpm gen:types` can regenerate
 // a full set from the OpenAPI schema into lib/api-types.ts.
-export type AlgoState = { mode: string; live_armed: boolean; algo_state: string };
+export type AlgoState = {
+  mode: string; live_armed: boolean; algo_state: string;
+  active_underlying: string | null; oi_underlyings: string[];
+};
 export type SymbolPnL = {
   symbol: string; buy_qty: number; sell_qty: number; avg_buy: number; avg_sell: number;
   net_qty: number; realized_pnl: number;
@@ -75,5 +79,8 @@ export type Order = {
   price: string; order_type: string; product: string; status: string; order_time: string;
 };
 export type ChainStrike = { strike: number; ce_oi: number; ce_ltp: number; pe_oi: number; pe_ltp: number };
-export type Chain = { ce_oi_total: number; pe_oi_total: number; selected_side: string; per_strike: ChainStrike[] };
+export type Chain = {
+  underlying: string | null; ce_oi_total: number; pe_oi_total: number;
+  selected_side: string; per_strike: ChainStrike[];
+};
 export type StreamPayload = { state: AlgoState; pnl: PnL; chain: Chain };

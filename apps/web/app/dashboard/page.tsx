@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { Banner, DataTable, Metric, Tabs } from "@/components/ui";
-import { api, clearToken, type Order, type Position, type Trade } from "@/lib/api";
+import { api, clearToken, type Chain, type Order, type Position, type Trade } from "@/lib/api";
 import { useStream } from "@/lib/useStream";
 
 const TABS = ["P&L", "Positions", "Orders", "Trades", "Option Chain", "Config"];
@@ -16,14 +16,20 @@ export default function Dashboard() {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [config, setConfig] = useState<Record<string, unknown>>({});
   const [saveMsg, setSaveMsg] = useState("");
+  // Option-chain view: which underlying to show (null = follow today's active), plus its live chain.
+  const [chainUnderlying, setChainUnderlying] = useState<string | null>(null);
+  const [chainView, setChainView] = useState<Chain | null>(null);
 
   const refresh = useCallback(async () => {
-    const [p, o, t, c] = await Promise.all([api.positions(), api.orders(), api.trades(), api.config()]);
+    const [p, o, t, c, ch] = await Promise.all([
+      api.positions(), api.orders(), api.trades(), api.config(), api.chain(chainUnderlying ?? undefined),
+    ]);
     setPositions(p);
     setOrders(o);
     setTrades(t);
     setConfig(c);
-  }, []);
+    setChainView(ch);
+  }, [chainUnderlying]);
 
   useEffect(() => {
     refresh().catch(() => {});
@@ -49,7 +55,9 @@ export default function Dashboard() {
 
   const state = data?.state;
   const pnl = data?.pnl;
-  const chain = data?.chain;
+  const underlyings = state?.oi_underlyings ?? [];
+  const activeUnderlying = state?.active_underlying ?? null;
+  const shownUnderlying = chainUnderlying ?? chainView?.underlying ?? activeUnderlying;
 
   return (
     <main className="mx-auto max-w-6xl space-y-4 p-6">
@@ -85,14 +93,41 @@ export default function Dashboard() {
       {tab === "Positions" && <DataTable rows={positions as unknown as Record<string, unknown>[]} />}
       {tab === "Orders" && <DataTable rows={orders as unknown as Record<string, unknown>[]} />}
       {tab === "Trades" && <DataTable rows={trades as unknown as Record<string, unknown>[]} />}
-      {tab === "Option Chain" && chain && (
+      {tab === "Option Chain" && (
         <div className="space-y-4">
-          <div className="grid grid-cols-3 gap-3">
-            <Metric label="Total CE OI" value={chain.ce_oi_total.toLocaleString()} />
-            <Metric label="Total PE OI" value={chain.pe_oi_total.toLocaleString()} />
-            <Metric label="Higher-OI side" value={chain.selected_side} />
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-neutral-400">Underlying:</span>
+            {underlyings.map((u) => {
+              const selected = u === shownUnderlying;
+              return (
+                <button
+                  key={u}
+                  onClick={() => setChainUnderlying(u)}
+                  className={`rounded-md px-3 py-1.5 text-sm ${selected ? "bg-blue-600 text-white" : "bg-neutral-800 text-neutral-300 hover:bg-neutral-700"}`}
+                >
+                  {u}
+                  {u === activeUnderlying && <span className="ml-1 text-xs opacity-70">• today</span>}
+                </button>
+              );
+            })}
+            {chainUnderlying && chainUnderlying !== activeUnderlying && (
+              <button onClick={() => setChainUnderlying(null)} className="text-xs text-neutral-400 underline">
+                follow today ({activeUnderlying ?? "—"})
+              </button>
+            )}
           </div>
-          <DataTable rows={chain.per_strike as unknown as Record<string, unknown>[]} />
+          {chainView ? (
+            <>
+              <div className="grid grid-cols-3 gap-3">
+                <Metric label="Total CE OI" value={chainView.ce_oi_total.toLocaleString()} />
+                <Metric label="Total PE OI" value={chainView.pe_oi_total.toLocaleString()} />
+                <Metric label="Higher-OI side" value={chainView.selected_side} />
+              </div>
+              <OptionChainTable chain={chainView} />
+            </>
+          ) : (
+            <p className="text-sm text-neutral-500">No chain data for {shownUnderlying ?? "the selected underlying"} yet.</p>
+          )}
         </div>
       )}
       {tab === "Config" && (
@@ -118,5 +153,43 @@ export default function Dashboard() {
         </div>
       )}
     </main>
+  );
+}
+
+// Classic option-chain layout: calls on the left, strike in the middle, puts on the right.
+// The higher-OI cell in each row is highlighted so the OI skew is visible at a glance.
+function OptionChainTable({ chain }: { chain: Chain }) {
+  const rows = [...chain.per_strike].sort((a, b) => a.strike - b.strike);
+  const maxOi = Math.max(1, ...rows.flatMap((r) => [r.ce_oi, r.pe_oi]));
+  const bar = (oi: number, side: "ce" | "pe") => ({
+    background: `linear-gradient(${side === "ce" ? "to left" : "to right"}, ${
+      side === "ce" ? "rgba(16,185,129,0.18)" : "rgba(239,68,68,0.18)"
+    } ${(oi / maxOi) * 100}%, transparent 0)`,
+  });
+  return (
+    <div className="overflow-x-auto rounded-md border border-neutral-800">
+      <table className="w-full text-right text-sm tabular-nums">
+        <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
+          <tr>
+            <th className="px-3 py-2">CE OI</th>
+            <th className="px-3 py-2">CE LTP</th>
+            <th className="px-3 py-2 text-center">Strike</th>
+            <th className="px-3 py-2 text-left">PE LTP</th>
+            <th className="px-3 py-2 text-left">PE OI</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.strike} className="border-t border-neutral-800/60">
+              <td className="px-3 py-1.5" style={bar(r.ce_oi, "ce")}>{r.ce_oi.toLocaleString()}</td>
+              <td className="px-3 py-1.5 text-emerald-400">{r.ce_ltp.toFixed(2)}</td>
+              <td className="px-3 py-1.5 text-center font-semibold text-neutral-200">{r.strike.toLocaleString()}</td>
+              <td className="px-3 py-1.5 text-left text-red-400">{r.pe_ltp.toFixed(2)}</td>
+              <td className="px-3 py-1.5 text-left" style={bar(r.pe_oi, "pe")}>{r.pe_oi.toLocaleString()}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

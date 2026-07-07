@@ -50,7 +50,8 @@ class OptionChainManager:
         self._writer = snapshot_writer
         self._underlying = underlying
         self._step = settings.strike_step_for(underlying)
-        self._window = settings.strike_window
+        self._window = settings.feed_window()  # capture/subscribe window (>= OI band)
+        self._oi_band = settings.strike_window  # strikes each side of ATM the strategy aggregates
         self._hysteresis = self._step * Decimal("0.2")
 
         self._spot: Decimal | None = None
@@ -129,9 +130,15 @@ class OptionChainManager:
         return list(self._quotes.values())
 
     def aggregate_oi(self) -> tuple[int, int]:
-        """(total CE OI, total PE OI) across the current window."""
-        ce = sum(q.oi or 0 for q in self._quotes.values() if q.instrument.option_type is OptionType.CE)
-        pe = sum(q.oi or 0 for q in self._quotes.values() if q.instrument.option_type is OptionType.PE)
+        """(total CE OI, total PE OI) across the strategy's ATM ±strike_window band. The capture
+        window may be wider (for the chain view); OI aggregation stays on the central band."""
+        band = self._oi_band * self._step
+        in_band = [
+            q for q in self._quotes.values()
+            if self._atm is not None and abs(q.instrument.strike - self._atm) <= band
+        ]
+        ce = sum(q.oi or 0 for q in in_band if q.instrument.option_type is OptionType.CE)
+        pe = sum(q.oi or 0 for q in in_band if q.instrument.option_type is OptionType.PE)
         return ce, pe
 
     def vwap_for(self, instrument_token: str) -> Decimal | None:

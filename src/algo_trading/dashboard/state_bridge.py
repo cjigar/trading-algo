@@ -57,6 +57,10 @@ class StateBridge:
             latest_pnl_snapshot=self._repo.latest_pnl(),
         )
 
+    def chain(self, underlying: str | None = None) -> list:
+        """Latest option-chain snapshots, optionally filtered to one underlying."""
+        return self._repo.latest_chain_state(underlying=underlying)
+
     # -- Control commands (consumed by the orchestrator) -------------------------------
 
     def send_start(self) -> None:

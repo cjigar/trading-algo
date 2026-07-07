@@ -45,3 +45,6 @@ apps/web/lib/api-types.ts
 .DS_Store
 .idea/
 .vscode/
+
+# Next.js generated types
+apps/web/next-env.d.ts

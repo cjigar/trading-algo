@@ -13,6 +13,8 @@ class StateOut(BaseModel):
     mode: str
     live_armed: bool
     algo_state: str
+    active_underlying: str | None  # the OI underlying that trades today (SENSEX Wed/Thu, NIFTY else)
+    oi_underlyings: list[str]
 
 
 class SymbolPnLOut(BaseModel):
@@ -74,6 +76,7 @@ class ChainStrikeOut(BaseModel):
 
 
 class ChainOut(BaseModel):
+    underlying: str | None
     ce_oi_total: int
     pe_oi_total: int
     selected_side: str
@@ -81,7 +84,12 @@ class ChainOut(BaseModel):
 
 
 def state_out(settings: Settings, s: DashboardState) -> StateOut:
-    return StateOut(mode=settings.mode.value, live_armed=settings.live_armed, algo_state=s.algo_state.value)
+    active = settings.active_underlying_for_today()
+    return StateOut(
+        mode=settings.mode.value, live_armed=settings.live_armed, algo_state=s.algo_state.value,
+        active_underlying=active.value if active else None,
+        oi_underlyings=[u.value for u in settings.oi_underlyings],
+    )
 
 
 def pnl_out(s: DashboardState) -> PnLOut:
@@ -114,8 +122,9 @@ def orders_out(s: DashboardState) -> list[OrderOut]:
                      product=o.product, status=o.status, order_time=o.order_time) for o in s.orders]
 
 
-def chain_out(s: DashboardState) -> ChainOut:
-    cs = summarize_chain(s.chain)
-    return ChainOut(ce_oi_total=cs.ce_oi_total, pe_oi_total=cs.pe_oi_total, selected_side=cs.selected_side,
+def chain_out(rows: list, underlying: str | None = None) -> ChainOut:
+    cs = summarize_chain(rows)
+    return ChainOut(underlying=underlying, ce_oi_total=cs.ce_oi_total, pe_oi_total=cs.pe_oi_total,
+                    selected_side=cs.selected_side,
                     per_strike=[ChainStrikeOut(strike=float(x.strike), ce_oi=x.ce_oi, ce_ltp=float(x.ce_ltp),
                                                pe_oi=x.pe_oi, pe_ltp=float(x.pe_ltp)) for x in cs.per_strike])

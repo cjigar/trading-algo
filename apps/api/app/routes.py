@@ -81,8 +81,16 @@ def get_trades(bridge: StateBridge = Depends(get_bridge)):
 
 
 @api.get("/chain", response_model=ChainOut)
-def get_chain(bridge: StateBridge = Depends(get_bridge)):
-    return chain_out(bridge.read_state())
+def get_chain(
+    underlying: str | None = None,
+    settings: Settings = Depends(get_engine_settings),
+    bridge: StateBridge = Depends(get_bridge),
+):
+    # Default to the underlying that trades today (SENSEX Wed/Thu, NIFTY else).
+    if not underlying:
+        active = settings.active_underlying_for_today()
+        underlying = active.value if active else None
+    return chain_out(bridge.chain(underlying), underlying)
 
 
 # --- Controls (enqueue commands; never the broker order path) -------------------------
@@ -130,13 +138,16 @@ def put_config(body: ConfigIn) -> dict[str, Any]:
 
 
 def build_stream_payload() -> dict[str, Any]:
-    """Assemble one live-stream snapshot (state + P&L + chain). Pure/testable."""
+    """Assemble one live-stream snapshot (state + P&L + today's-underlying chain). Pure/testable."""
     settings = get_settings(reload=True)
-    state = StateBridge(settings).read_state()
+    bridge = StateBridge(settings)
+    state = bridge.read_state()
+    active = settings.active_underlying_for_today()
+    u = active.value if active else None
     return {
         "state": state_out(settings, state).model_dump(),
         "pnl": pnl_out(state).model_dump(),
-        "chain": chain_out(state).model_dump(),
+        "chain": chain_out(bridge.chain(u), u).model_dump(),
     }
 
 

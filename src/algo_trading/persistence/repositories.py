@@ -191,20 +191,23 @@ class Repository:
             session.commit()
         return len(rows)
 
-    def latest_chain_state(self, trading_day: date | None = None) -> list[OptionChainSnapshotRow]:
-        """Latest snapshot per instrument token for the day (the current chain state)."""
+    def latest_chain_state(
+        self, trading_day: date | None = None, underlying: str | None = None
+    ) -> list[OptionChainSnapshotRow]:
+        """Latest snapshot per instrument token for the day (the current chain state), optionally
+        filtered to one underlying (e.g. only SENSEX)."""
         day = _today_str(trading_day)
         with Session(self._engine) as session:
-            latest_ids = (
+            latest_q = (
                 select(func.max(OptionChainSnapshotRow.id))
                 .where(OptionChainSnapshotRow.trading_day == day)
                 .group_by(col(OptionChainSnapshotRow.instrument_token))
             )
+            if underlying is not None:
+                latest_q = latest_q.where(OptionChainSnapshotRow.underlying == underlying)
             return list(
                 session.exec(
-                    select(OptionChainSnapshotRow).where(
-                        col(OptionChainSnapshotRow.id).in_(latest_ids)
-                    )
+                    select(OptionChainSnapshotRow).where(col(OptionChainSnapshotRow.id).in_(latest_q))
                 )
             )
 

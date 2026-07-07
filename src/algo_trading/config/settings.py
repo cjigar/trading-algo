@@ -69,7 +69,9 @@ class Settings(BaseSettings):
     # --- OI selling strategy (PLACEHOLDERS — confirm before live) ---
     # Underlyings the OI strategy trades (each gated to its own weekdays below).
     oi_underlyings: Annotated[list[Underlying], NoDecode] = Field(default_factory=lambda: [Underlying.NIFTY])
-    strike_window: int = 5  # strikes each side of ATM to subscribe/aggregate
+    strike_window: int = 5  # strikes each side of ATM the strategy AGGREGATES OI over
+    # strikes each side of ATM to subscribe/capture for the chain VIEW (0 = same as strike_window)
+    chain_feed_window: int = 0
     otm_strikes: int = 3  # strikes OTM to sell (CE=ATM+3, PE=ATM-3)
     strike_step: Decimal = Decimal("50")  # NIFTY strike interval
     sensex_strike_step: Decimal = Decimal("100")  # SENSEX strike interval
@@ -161,6 +163,22 @@ class Settings(BaseSettings):
         """Weekdays this underlying may take entries (NIFTY Fri/Mon/Tue, SENSEX Wed/Thu)."""
         return self.allowed_weekdays if underlying is Underlying.NIFTY else self.sensex_weekdays
 
+    def feed_window(self) -> int:
+        """Strikes each side of ATM to subscribe/capture for the chain (view window >= OI band)."""
+        return self.chain_feed_window if self.chain_feed_window > 0 else self.strike_window
+
+    def active_underlying_for_today(self, weekday: int | None = None) -> Underlying | None:
+        """The OI underlying whose trading weekdays include today (SENSEX Wed/Thu, NIFTY else).
+        Falls back to the first configured OI underlying if none matches."""
+        import datetime as _dt
+        from zoneinfo import ZoneInfo
+
+        wd = weekday if weekday is not None else _dt.datetime.now(ZoneInfo("Asia/Kolkata")).weekday()
+        for u in self.oi_underlyings:
+            if wd in set(self.weekdays_for(u)):
+                return u
+        return self.oi_underlyings[0] if self.oi_underlyings else None
+
     def lot_size_for(self, underlying: Underlying) -> int:
         """Configured lot-size override for an underlying (0 = use the scrip master's lot size)."""
         return self.nifty_lot_size if underlying is Underlying.NIFTY else self.sensex_lot_size
@@ -212,7 +230,7 @@ EDITABLE_FIELDS: frozenset[str] = frozenset({
     "lots", "nifty_lot_size", "sensex_lot_size",
     "allowed_weekdays", "sensex_weekdays", "market_holidays",
     "target_points", "trail_points", "stoploss_points", "vwap_breakout_buffer",
-    "strike_window", "otm_strikes", "chain_eval_seconds",
+    "strike_window", "chain_feed_window", "otm_strikes", "chain_eval_seconds",
     "daily_loss_cap", "max_positions", "max_trades_per_day", "flatten_on_kill_switch",
     "candle_timeframe_minutes", "strike_selection",
 })

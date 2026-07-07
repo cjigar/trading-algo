@@ -58,7 +58,9 @@ def test_chain(client, auth, repo):
         {"underlying": "NIFTY", "strike": "23000", "option_type": "PE", "instrument_token": "p1",
          "oi": 1000, "ltp": "90", "volume": 10},
     ])
-    chain = client.get("/api/chain", headers=auth).json()
+    # Explicit underlying (the endpoint otherwise defaults to today's active underlying).
+    chain = client.get("/api/chain", params={"underlying": "NIFTY"}, headers=auth).json()
+    assert chain["underlying"] == "NIFTY"
     assert chain["ce_oi_total"] == 5000 and chain["pe_oi_total"] == 1000
     assert chain["selected_side"] == "CE"
     assert len(chain["per_strike"]) == 1
