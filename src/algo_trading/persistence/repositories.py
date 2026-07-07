@@ -7,11 +7,11 @@ state (each transition also appends an immutable event), and persisted algo-stat
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import Engine
-from sqlmodel import Session, select
+from sqlalchemy import Engine, delete, func
+from sqlmodel import Session, col, select
 
 from algo_trading.domain.enums import AlgoState, ExchangeSegment, OptionType, Side, Underlying
 from algo_trading.domain.models import Instrument, OrderEvent, OrderRequest, Trade
@@ -20,6 +20,7 @@ from algo_trading.persistence.db import (
     AuditEventRow,
     BrokerOrderRow,
     ControlCommandRow,
+    OptionChainSnapshotRow,
     OrderEventRow,
     OrderRow,
     PnlSnapshotRow,
@@ -163,6 +164,59 @@ class Repository:
                 )
             )
             session.commit()
+
+    # -- Option-chain snapshots (append-only time series) ------------------------------
+
+    def write_chain_snapshots(self, rows: list[dict], trading_day: date | None = None) -> int:
+        """Bulk-insert option-chain snapshot rows. Each dict: underlying, strike, option_type,
+        instrument_token, oi, ltp, volume, timestamp."""
+        if not rows:
+            return 0
+        day = _today_str(trading_day)
+        with Session(self._engine) as session:
+            for r in rows:
+                session.add(
+                    OptionChainSnapshotRow(
+                        trading_day=day,
+                        underlying=str(r["underlying"]),
+                        strike=str(r["strike"]),
+                        option_type=str(r["option_type"]),
+                        instrument_token=str(r["instrument_token"]),
+                        oi=r.get("oi"),
+                        ltp=str(r.get("ltp", "0")),
+                        volume=r.get("volume"),
+                        timestamp=r.get("timestamp") or datetime.utcnow(),
+                    )
+                )
+            session.commit()
+        return len(rows)
+
+    def latest_chain_state(self, trading_day: date | None = None) -> list[OptionChainSnapshotRow]:
+        """Latest snapshot per instrument token for the day (the current chain state)."""
+        day = _today_str(trading_day)
+        with Session(self._engine) as session:
+            latest_ids = (
+                select(func.max(OptionChainSnapshotRow.id))
+                .where(OptionChainSnapshotRow.trading_day == day)
+                .group_by(col(OptionChainSnapshotRow.instrument_token))
+            )
+            return list(
+                session.exec(
+                    select(OptionChainSnapshotRow).where(
+                        col(OptionChainSnapshotRow.id).in_(latest_ids)
+                    )
+                )
+            )
+
+    def prune_snapshots(self, older_than_days: int, today: date | None = None) -> int:
+        """Delete option-chain snapshots older than ``older_than_days``. Returns rows deleted."""
+        cutoff = ((today or date.today()) - timedelta(days=older_than_days)).isoformat()
+        with Session(self._engine) as session:
+            result = session.exec(
+                delete(OptionChainSnapshotRow).where(col(OptionChainSnapshotRow.trading_day) < cutoff)
+            )
+            session.commit()
+            return result.rowcount or 0
 
     def record_broker_order(self, fields: dict, trading_day: date | None = None) -> bool:
         """Upsert an order from the broker's order report, keyed by order_id. Returns True if a

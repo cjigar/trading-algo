@@ -74,10 +74,17 @@ def main() -> None:
     signal.signal(signal.SIGINT, _handle_sigterm)
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
-    log.info("running")
+    # OI-selling strategy is evaluated on a timer (not candle-driven); vwap_breakout is tick-driven.
+    eval_every = max(1, settings.chain_eval_seconds)
+    elapsed = 0
+    log.info("running", strategy=settings.strategy)
     try:
         while not stop["flag"]:  # pragma: no cover - long-running loop
             orch.process_control_commands()
+            elapsed += 1
+            if settings.strategy == "oi_selling" and elapsed >= eval_every:
+                orch.evaluate_oi()
+                elapsed = 0
             time.sleep(1.0)
     finally:
         scheduler.shutdown()

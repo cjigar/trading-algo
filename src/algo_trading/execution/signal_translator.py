@@ -30,18 +30,33 @@ class SignalTranslator:
         self._resolver = resolver
 
     def translate(self, signal: Signal, option_ltp: Decimal | None = None) -> OrderRequest:
-        instrument = self._resolver.resolve(
-            underlying=signal.underlying,
-            spot=signal.reference_price,
-            option_type=signal.option_type,
-            selection=self._settings.strike_selection,
-        )
+        if signal.target_strike is not None:
+            # explicit strike (e.g. OI strategy's 3-OTM); snap to nearest if absent
+            instrument = self._resolver.find_at_strike(
+                signal.underlying, signal.target_strike, signal.option_type
+            )
+            if instrument is None:
+                raise ValueError(
+                    f"No contract at strike {signal.target_strike} for "
+                    f"{signal.underlying.value} {signal.option_type.value}"
+                )
+        else:
+            instrument = self._resolver.resolve(
+                underlying=signal.underlying,
+                spot=signal.reference_price,
+                option_type=signal.option_type,
+                selection=self._settings.strike_selection,
+            )
         quantity = self._settings.lots * instrument.lot_size
         return self._build(instrument, signal.side, quantity, option_ltp, is_exit=False)
 
-    def build_exit(self, instrument: Instrument, quantity: int, ltp: Decimal | None) -> OrderRequest:
-        """Build an exit (SELL) order to flatten a long option position."""
-        return self._build(instrument, Side.SELL, quantity, ltp, is_exit=True)
+    def build_exit(
+        self, instrument: Instrument, quantity: int, ltp: Decimal | None,
+        position_side: Side = Side.BUY,
+    ) -> OrderRequest:
+        """Build an order to flatten a position: SELL to close a long, BUY to close a short."""
+        close_side = Side.SELL if position_side is Side.BUY else Side.BUY
+        return self._build(instrument, close_side, quantity, ltp, is_exit=True)
 
     def _build(
         self,

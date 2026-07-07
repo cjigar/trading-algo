@@ -40,13 +40,16 @@ class Instrument(_Frozen):
 
 
 class Tick(_Frozen):
-    """A normalized market-data update."""
+    """A normalized market-data update. ``oi``/``volume`` are populated for option quotes that
+    carry them (the OI-selling strategy needs open interest); None when unavailable."""
 
     instrument_token: str
     exchange_segment: ExchangeSegment
     ltp: Decimal
     timestamp: datetime
     is_index: bool = False
+    oi: int | None = None
+    volume: int | None = None
 
 
 class Candle(_Frozen):
@@ -71,6 +74,9 @@ class Signal(_Frozen):
     reference_price: Decimal  # underlying price at signal time (for strike selection)
     timestamp: datetime
     reason: str = ""
+    # When set, the translator resolves this exact strike (e.g. OI strategy's 3-OTM strike)
+    # instead of using the config StrikeSelection offset.
+    target_strike: Decimal | None = None
 
 
 class OrderRequest(_Frozen):

@@ -51,7 +51,18 @@ def normalize_tick(raw: dict, *, now: datetime | None = None) -> Tick | None:
         ltp=ltp,
         timestamp=now or datetime.now(UTC),
         is_index=bool(raw.get("is_index", False)),
+        oi=_int_or_none(raw.get("oi") or raw.get("openInterest") or raw.get("OI") or raw.get("oI")),
+        volume=_int_or_none(raw.get("volume") or raw.get("vol") or raw.get("v") or raw.get("ltq")),
     )
+
+
+def _int_or_none(value: object) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(float(value))  # type: ignore[arg-type]
+    except (ValueError, TypeError):
+        return None
 
 
 class FeedHandler:

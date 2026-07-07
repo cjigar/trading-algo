@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     nifty_index_token: str = ""
     sensex_index_token: str = ""
 
+    # --- Strategy selection ---
+    strategy: str = "vwap_breakout"  # vwap_breakout | oi_selling
+
     # --- Strategy parameters (PLACEHOLDERS — confirm before live) ---
     candle_timeframe_minutes: int = 5
     strike_selection: StrikeSelection = StrikeSelection.ATM
@@ -60,6 +63,19 @@ class Settings(BaseSettings):
     target_points: Decimal = Decimal("30")
     trail_points: Decimal = Decimal("10")
     stoploss_points: Decimal = Decimal("15")
+
+    # --- OI selling strategy (PLACEHOLDERS — confirm before live) ---
+    strike_window: int = 5  # strikes each side of ATM to subscribe/aggregate
+    otm_strikes: int = 3  # strikes OTM to sell (CE=ATM+3, PE=ATM-3)
+    strike_step: Decimal = Decimal("50")  # NIFTY strike interval
+    chain_eval_seconds: int = 30  # cadence for OI evaluation
+    snapshot_min_interval_seconds: int = 2  # min gap between persisted snapshots per token
+    chain_retention_days: int = 30  # prune option-chain snapshots older than this
+    margin_buffer: Decimal = Decimal("0")  # fraction of extra margin headroom required
+    # Weekdays the OI strategy may take entries (Mon=0 … Sun=6). Default Fri, Mon, Tue.
+    allowed_weekdays: Annotated[list[int], NoDecode] = Field(default_factory=lambda: [4, 0, 1])
+    # NSE trading holidays (ISO dates) on which the strategy takes no entries. Operator-supplied.
+    market_holidays: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     # --- Risk ---
     lots: int = 1
@@ -90,6 +106,27 @@ class Settings(BaseSettings):
     def _split_underlyings(cls, v: object) -> object:
         if isinstance(v, str):
             return [item.strip().upper() for item in v.split(",") if item.strip()]
+        return v
+
+    @field_validator("allowed_weekdays", mode="before")
+    @classmethod
+    def _parse_weekdays(cls, v: object) -> object:
+        if not isinstance(v, str):
+            return v
+        names = {"MON": 0, "TUE": 1, "WED": 2, "THU": 3, "FRI": 4, "SAT": 5, "SUN": 6}
+        out: list[int] = []
+        for item in v.split(","):
+            token = item.strip().upper()
+            if not token:
+                continue
+            out.append(names[token[:3]] if token[:3] in names else int(token))
+        return out
+
+    @field_validator("market_holidays", mode="before")
+    @classmethod
+    def _split_holidays(cls, v: object) -> object:
+        if isinstance(v, str):
+            return [item.strip() for item in v.split(",") if item.strip()]
         return v
 
     @field_validator("market_open", "market_close", "squareoff_time", "premarket_login_time", mode="before")

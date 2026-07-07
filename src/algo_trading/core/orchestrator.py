@@ -9,6 +9,7 @@ live requires explicit confirmation before real orders are armed.
 from __future__ import annotations
 
 import threading
+from datetime import UTC
 from decimal import Decimal
 from typing import Any
 
@@ -73,7 +74,27 @@ class Orchestrator:
         self._risk = RiskManager(self._settings, self._repo, self._positions)
         self._resolver = WeeklyOptionResolver(scrip_master)
         self._translator = SignalTranslator(self._settings, self._resolver)
-        self._strategy = strategy or VwapBreakoutStrategy(self._settings)
+
+        self._oi_mode = self._settings.strategy == "oi_selling"
+        self._chain: Any = None  # OptionChainManager (OI mode)
+        self._short_tokens: dict[str, Any] = {}  # option token -> Instrument (open shorts)
+        if self._oi_mode:
+            from algo_trading.feed.option_chain import OptionChainManager
+            from algo_trading.persistence.snapshot_writer import SnapshotWriter
+            from algo_trading.strategy.oi_selling import OiSellingStrategy
+
+            self._writer = SnapshotWriter(
+                self._repo,
+                flush_seconds=float(self._settings.snapshot_min_interval_seconds) or 2.0,
+                min_interval_seconds=float(self._settings.snapshot_min_interval_seconds),
+            )
+            self._chain = OptionChainManager(
+                self._settings, self._resolver,
+                subscribe=self._subscribe_option, snapshot_writer=self._writer,
+            )
+            self._strategy: Any = strategy or OiSellingStrategy(self._settings, self._chain)
+        else:
+            self._strategy = strategy or VwapBreakoutStrategy(self._settings)
 
         self._broker = broker or self._build_broker()
         self._orders = OrderManager(self._broker, self._repo, self._settings, on_fill=self._on_fill)
@@ -85,6 +106,11 @@ class Orchestrator:
         self._exit_symbol_token: dict[str, str] = {}  # option token -> trading symbol
 
         self._wire_bus()
+
+    def _subscribe_option(self, token: str, segment) -> None:
+        """Subscribe an option's quotes if a live coordinator is attached (chain manager callback)."""
+        if self._coordinator is not None:
+            self._coordinator.subscribe_option(token, segment)
 
     # -- Mode gating -------------------------------------------------------------------
 
@@ -180,26 +206,85 @@ class Orchestrator:
         self._ltp[tick.instrument_token] = tick.ltp
         self._positions.on_price(tick.instrument_token, tick.ltp)
 
-        # If this is an index tick, feed the underlying's candle builder.
         underlying = self._underlying_token.get(tick.instrument_token)
-        if underlying is not None:
-            symbol = _underlying_symbol(underlying)
-            builder = self._candles.get(symbol)
-            if builder is not None:
-                closed = builder.add_tick(tick)
-                if closed is not None:
-                    self._bus.publish(Topic.CANDLE, closed)
 
-        # Exit evaluation for any option position quoted by this tick.
-        self._evaluate_exit(tick.instrument_token, tick.ltp)
+        if self._oi_mode:
+            # Route to the option-chain manager (index -> ATM window; option -> OI/LTP/VWAP capture).
+            if underlying is not None:
+                self._chain.on_index_tick(tick)
+            else:
+                self._chain.on_option_tick(tick)
+                self._evaluate_short_vwap_exit(tick.instrument_token, tick.ltp)
+        else:
+            # Candle path for the VWAP-breakout strategy.
+            if underlying is not None:
+                builder = self._candles.get(_underlying_symbol(underlying))
+                if builder is not None:
+                    closed = builder.add_tick(tick)
+                    if closed is not None:
+                        self._bus.publish(Topic.CANDLE, closed)
+            self._evaluate_exit(tick.instrument_token, tick.ltp)
 
         # Continuously evaluate the kill-switch on P&L moves.
         self._risk.evaluate_kill_switch()
+
+    def _evaluate_short_vwap_exit(self, token: str, ltp: Decimal) -> None:
+        inst = self._short_tokens.get(token)
+        if inst is None:
+            return
+        vwap = self._chain.vwap_for(token) if self._chain else None
+        reason = self._exits.evaluate_short_vwap(inst.trading_symbol, ltp, vwap)
+        if reason is not None:
+            self._flatten_short(inst, ltp, reason.value)
 
     def _handle_candle(self, candle) -> None:
         signals = self._strategy.on_candle(candle)
         for signal in signals:
             self._handle_signal(signal)
+
+    def evaluate_oi(self, now: Any = None) -> None:
+        """Run the OI strategy once (called on a timer). No-op outside OI mode / when halted."""
+        if not self._oi_mode or self._risk.is_halted():
+            return
+        from datetime import datetime
+
+        for signal in self._strategy.evaluate(now or datetime.now(UTC)):
+            self._handle_short_signal(signal)
+
+    def _handle_short_signal(self, signal: Signal) -> None:
+        decision = self._risk.check_entry(signal)
+        if not decision.allowed:
+            log.info("entry_blocked", reason=decision.reason)
+            return
+        try:
+            request = self._translator.translate(signal)
+            ltp = self._ltp.get(request.instrument.instrument_token)
+            if ltp is not None:
+                request = self._translator.translate(signal, option_ltp=ltp)
+        except Exception:  # noqa: BLE001
+            log.exception("short_signal_translation_failed")
+            return
+        if not self._short_margin_ok(request):
+            log.info("entry_blocked", reason="insufficient margin")
+            return
+        self._orders.submit(request)  # sell-to-open
+        self._risk.register_entry()
+
+    def _short_margin_ok(self, request) -> bool:
+        """Margin pre-check for a short. Paper/unknown -> pass; live parsing is confirmed against
+        the API in task 7.4 (margin response shape). Never blocks on a fetch error."""
+        if not self._settings.is_live:
+            return True
+        try:
+            required = self._broker.margin_required(request) if hasattr(self._broker, "margin_required") else Decimal(0)
+            limits = self._broker.limits()
+            available = Decimal(str(limits.get("Net", limits.get("net", 0)))) if isinstance(limits, dict) else Decimal(0)
+            if required in (None, 0) or available == 0:
+                return True  # can't determine -> don't block (flagged for live confirmation)
+            return self._risk.margin_ok(Decimal(str(required)), available)
+        except Exception:  # noqa: BLE001
+            log.warning("margin_check_failed_passing")
+            return True
 
     def _handle_signal(self, signal: Signal) -> None:
         decision = self._risk.check_entry(signal)
@@ -223,6 +308,23 @@ class Orchestrator:
     def _on_fill(self, trade: Trade) -> None:
         self._positions.on_fill(trade)
         symbol = trade.instrument.trading_symbol
+
+        if self._oi_mode:
+            pos = self._positions.position_for(symbol)
+            if pos is not None and pos.side is Side.SELL:
+                # short is open -> arm the VWAP-cross exit and track its token
+                self._exits.register_short_vwap(trade.instrument, pos.quantity, pos.average_price)
+                self._short_tokens[trade.instrument.instrument_token] = trade.instrument
+                if self._coordinator is not None:
+                    self._coordinator.subscribe_option(
+                        trade.instrument.instrument_token, trade.instrument.exchange_segment
+                    )
+            else:
+                # position flat (bought back) -> stop tracking
+                self._exits.unregister(symbol)
+                self._short_tokens.pop(trade.instrument.instrument_token, None)
+            return
+
         if trade.side is Side.BUY:
             # entry fill -> arm exits and remember the option token->symbol mapping
             self._exits.register(trade.instrument, trade.quantity, trade.price)
@@ -255,6 +357,16 @@ class Orchestrator:
         self._exits.unregister(symbol)  # prevent duplicate exits while the order works
         self._orders.submit(exit_req)
 
+    def _flatten_short(self, inst, ltp: Decimal, reason: str) -> None:
+        state = self._exits.short_state_for(inst.trading_symbol)
+        if state is None:
+            return
+        log.info("short_exit_triggered", symbol=inst.trading_symbol, reason=reason, ltp=str(ltp))
+        exit_req = self._translator.build_exit(inst, state.quantity, ltp, position_side=Side.SELL)
+        self._exits.unregister(inst.trading_symbol)  # prevent duplicate exits
+        self._short_tokens.pop(inst.instrument_token, None)
+        self._orders.submit(exit_req)  # buy-to-close
+
     # -- Square-off & control ----------------------------------------------------------
 
     def square_off_all(self, reason: str = "square_off") -> None:
@@ -262,7 +374,12 @@ class Orchestrator:
         for position in self._positions.open_positions():
             token = position.instrument.instrument_token
             ltp = self._ltp.get(token)
-            exit_req = self._translator.build_exit(position.instrument, position.quantity, ltp)
+            # close in the correct direction: SELL to close a long, BUY to close a short
+            exit_req = self._translator.build_exit(
+                position.instrument, position.quantity, ltp, position_side=position.side
+            )
+            self._exits.unregister(position.instrument.trading_symbol)
+            self._short_tokens.pop(token, None)
             self._orders.submit(exit_req)
         self._repo.record_audit("square_off", reason)
         log.info("square_off_all", reason=reason)

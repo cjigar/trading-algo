@@ -60,3 +60,40 @@ def test_multi_symbol_totals_and_sorting():
 def test_empty():
     s = summarize_fills([])
     assert s.total_realized == Decimal(0) and s.trade_count == 0 and s.per_symbol == []
+
+
+# -- Chain summary --------------------------------------------------------------------
+
+
+class _Row:
+    def __init__(self, strike, ot, oi, ltp):
+        self.strike = strike
+        self.option_type = ot
+        self.oi = oi
+        self.ltp = ltp
+
+
+def test_summarize_chain_pivots_and_selects_side():
+    from algo_trading.reporting import summarize_chain
+    rows = [
+        _Row("23000", "CE", 5000, "120"), _Row("23000", "PE", 1000, "80"),
+        _Row("23050", "CE", 4000, "90"), _Row("23050", "PE", 2000, "100"),
+    ]
+    s = summarize_chain(rows)
+    assert s.ce_oi_total == 9000
+    assert s.pe_oi_total == 3000
+    assert s.selected_side == "CE"  # CE OI dominant
+    assert [str(x.strike) for x in s.per_strike] == ["23000", "23050"]  # sorted
+    assert s.per_strike[0].ce_oi == 5000 and s.per_strike[0].pe_oi == 1000
+
+
+def test_summarize_chain_tie():
+    from algo_trading.reporting import summarize_chain
+    rows = [_Row("23000", "CE", 1000, "1"), _Row("23000", "PE", 1000, "1")]
+    assert summarize_chain(rows).selected_side == "—"
+
+
+def test_summarize_chain_empty():
+    from algo_trading.reporting import summarize_chain
+    s = summarize_chain([])
+    assert s.per_strike == [] and s.ce_oi_total == 0 and s.selected_side == "—"

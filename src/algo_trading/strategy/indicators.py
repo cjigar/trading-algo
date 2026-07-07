@@ -44,6 +44,32 @@ class SessionVWAP:
         return self._value
 
 
+class TickVWAP:
+    """Session VWAP from individual ticks, weighted by traded quantity (falls back to equal
+    weighting when volume is unavailable). Used for the option VWAP-cross exit."""
+
+    def __init__(self) -> None:
+        self._pv = Decimal(0)
+        self._v = Decimal(0)
+        self._value: Decimal | None = None
+
+    def reset(self) -> None:
+        self._pv = Decimal(0)
+        self._v = Decimal(0)
+        self._value = None
+
+    def update(self, price: Decimal, weight: Decimal | None = None) -> Decimal:
+        w = weight if (weight is not None and weight > 0) else Decimal(1)
+        self._pv += price * w
+        self._v += w
+        self._value = self._pv / self._v
+        return self._value
+
+    @property
+    def value(self) -> Decimal | None:
+        return self._value
+
+
 class RollingExtrema:
     """Rolling high/low over the last ``window`` candles (excludes the current one by design:
     the caller updates *after* evaluating breakout against the prior window)."""

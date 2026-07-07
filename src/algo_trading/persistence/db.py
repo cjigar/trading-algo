@@ -136,6 +136,23 @@ class ControlCommandRow(SQLModel, table=True):
     consumed_at: datetime | None = Field(default=None, index=True)
 
 
+class OptionChainSnapshotRow(SQLModel, table=True):
+    """Append-only time series of option-chain quotes (OI/LTP/volume) for the ATM window."""
+
+    __tablename__ = "option_chain_snapshots"
+
+    id: int | None = Field(default=None, primary_key=True)
+    trading_day: str = Field(index=True)
+    underlying: str = Field(index=True)
+    strike: str
+    option_type: str
+    instrument_token: str = Field(index=True)
+    oi: int | None = None
+    ltp: str = "0"
+    volume: int | None = None
+    timestamp: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
 class BrokerOrderRow(SQLModel, table=True):
     """An order imported from the broker's order report (order book). Keyed by broker order id;
     re-importing upserts the latest status/fill."""

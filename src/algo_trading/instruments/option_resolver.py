@@ -47,6 +47,41 @@ class WeeklyOptionResolver:
         steps = (spot / step).to_integral_value(rounding="ROUND_HALF_UP")
         return steps * step
 
+    def atm_strike(self, underlying: Underlying, spot: Decimal, step: Decimal | None = None) -> Decimal:
+        """Public ATM strike = spot rounded to the nearest strike step."""
+        return self._atm_strike(spot, step or _DEFAULT_STRIKE_STEP.get(underlying, Decimal("50")))
+
+    def find_at_strike(
+        self, underlying: Underlying, strike: Decimal, option_type: OptionType,
+        today: date | None = None,
+    ) -> Instrument | None:
+        """Resolve the current-week contract at an exact strike (snap to nearest if absent)."""
+        expiry = self.current_week_expiry(underlying, today)
+        if expiry is None:
+            return None
+        inst = self._sm.find(underlying, expiry, strike, option_type)
+        if inst is not None:
+            return inst
+        available = self._sm.strikes(underlying, expiry, option_type)
+        if not available:
+            return None
+        nearest = min(available, key=lambda s: abs(s - strike))
+        return self._sm.find(underlying, expiry, nearest, option_type)
+
+    def chain(
+        self, underlying: Underlying, atm: Decimal, width: int, step: Decimal,
+        today: date | None = None,
+    ) -> list[Instrument]:
+        """Resolve the CE and PE contracts for strikes from ATM-width to ATM+width (inclusive)."""
+        out: list[Instrument] = []
+        for i in range(-width, width + 1):
+            strike = atm + Decimal(i) * step
+            for ot in (OptionType.CE, OptionType.PE):
+                inst = self.find_at_strike(underlying, strike, ot, today)
+                if inst is not None:
+                    out.append(inst)
+        return out
+
     def resolve(
         self,
         underlying: Underlying,

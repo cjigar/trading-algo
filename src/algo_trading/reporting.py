@@ -43,6 +43,56 @@ def _avg(value: Decimal, qty: int) -> Decimal:
     return (value / Decimal(qty)) if qty else Decimal(0)
 
 
+@dataclass(frozen=True)
+class ChainStrike:
+    strike: Decimal
+    ce_oi: int
+    ce_ltp: Decimal
+    pe_oi: int
+    pe_ltp: Decimal
+
+
+@dataclass(frozen=True)
+class ChainSummary:
+    per_strike: list[ChainStrike]
+    ce_oi_total: int
+    pe_oi_total: int
+    selected_side: str  # "CE" | "PE" | "—"
+
+
+def summarize_chain(rows: list) -> ChainSummary:
+    """Pivot latest option-chain snapshot rows (with .strike/.option_type/.oi/.ltp) into a
+    per-strike CE/PE view plus the aggregate CE-vs-PE OI and the side the OI strategy would sell."""
+    by_strike: dict[Decimal, dict[str, tuple[int, Decimal]]] = {}
+    for r in rows:
+        try:
+            strike = Decimal(str(r.strike))
+        except (ValueError, ArithmeticError):
+            continue
+        oi = int(r.oi) if r.oi is not None else 0
+        ltp = _to_decimal(r.ltp)
+        by_strike.setdefault(strike, {})[str(r.option_type).upper()] = (oi, ltp)
+
+    per_strike: list[ChainStrike] = []
+    ce_total = pe_total = 0
+    for strike in sorted(by_strike):
+        ce = by_strike[strike].get("CE", (0, Decimal(0)))
+        pe = by_strike[strike].get("PE", (0, Decimal(0)))
+        ce_total += ce[0]
+        pe_total += pe[0]
+        per_strike.append(ChainStrike(strike, ce[0], ce[1], pe[0], pe[1]))
+
+    selected = "CE" if ce_total > pe_total else "PE" if pe_total > ce_total else "—"
+    return ChainSummary(per_strike, ce_total, pe_total, selected)
+
+
+def _to_decimal(v: object) -> Decimal:
+    try:
+        return Decimal(str(v))
+    except (ValueError, ArithmeticError):
+        return Decimal(0)
+
+
 def summarize_fills(trades: list[Trade]) -> FillSummary:
     """Aggregate fills into a per-symbol realized-P&L summary."""
     buy_qty: dict[str, int] = {}

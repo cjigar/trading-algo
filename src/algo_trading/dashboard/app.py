@@ -13,7 +13,7 @@ from __future__ import annotations
 from algo_trading.config.settings import get_settings
 from algo_trading.dashboard.state_bridge import StateBridge
 from algo_trading.domain.enums import AlgoState
-from algo_trading.reporting import summarize_fills
+from algo_trading.reporting import summarize_chain, summarize_fills
 
 
 def render() -> None:  # pragma: no cover - requires the Streamlit runtime
@@ -60,7 +60,7 @@ def render() -> None:  # pragma: no cover - requires the Streamlit runtime
 
     # Tabs are created OUTSIDE the fragments so the selected tab persists across auto-refreshes.
     # Each tab holds its own fragment that re-reads and re-renders on the timer.
-    tabs = st.tabs(["📊 P&L", "📋 Orders", "📈 Positions", "🧾 Trades", "📜 Audit"])
+    tabs = st.tabs(["📊 P&L", "📋 Orders", "📈 Positions", "🧾 Trades", "⛓️ Option Chain", "📜 Audit"])
 
     @st.fragment(run_every=refresh)
     def pnl_frag() -> None:
@@ -79,6 +79,10 @@ def render() -> None:  # pragma: no cover - requires the Streamlit runtime
         _render_trades(st, bridge.read_state())
 
     @st.fragment(run_every=refresh)
+    def chain_frag() -> None:
+        _render_chain(st, bridge.read_state())
+
+    @st.fragment(run_every=refresh)
     def audit_frag() -> None:
         _render_audit(st, bridge.read_state())
 
@@ -91,6 +95,8 @@ def render() -> None:  # pragma: no cover - requires the Streamlit runtime
     with tabs[3]:
         trades_frag()
     with tabs[4]:
+        chain_frag()
+    with tabs[5]:
         audit_frag()
 
 
@@ -179,6 +185,28 @@ def _render_trades(st, state) -> None:  # pragma: no cover
         )
     else:
         st.write("No trades yet.")
+
+
+def _render_chain(st, state) -> None:  # pragma: no cover
+    st.subheader("Option chain (ATM ±window)")
+    summary = summarize_chain(state.chain)
+    if not summary.per_strike:
+        st.write("No option-chain data. Run the OI strategy loop (STRATEGY=oi_selling) to capture it.")
+        return
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total CE OI", f"{summary.ce_oi_total:,}")
+    c2.metric("Total PE OI", f"{summary.pe_oi_total:,}")
+    c3.metric("Higher-OI side (would SELL)", summary.selected_side)
+    st.dataframe(
+        [
+            {
+                "strike": float(s.strike), "CE OI": s.ce_oi, "CE LTP": float(s.ce_ltp),
+                "PE LTP": float(s.pe_ltp), "PE OI": s.pe_oi,
+            }
+            for s in summary.per_strike
+        ],
+        use_container_width=True,
+    )
 
 
 def _render_audit(st, state) -> None:  # pragma: no cover

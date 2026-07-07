@@ -29,6 +29,7 @@ class DashboardState:
     trades: list = field(default_factory=list)
     orders: list = field(default_factory=list)
     audit: list = field(default_factory=list)
+    chain: list = field(default_factory=list)
     latest_pnl_snapshot: Decimal | None = None
 
 
@@ -52,6 +53,7 @@ class StateBridge:
             trades=trades,
             orders=self._repo.broker_orders_for_day(),
             audit=self._repo.audit_events(),
+            chain=self._repo.latest_chain_state(),
             latest_pnl_snapshot=self._repo.latest_pnl(),
         )
 

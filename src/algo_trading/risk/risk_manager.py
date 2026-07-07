@@ -8,6 +8,7 @@ defeated by restarting. All entry decisions go through :meth:`check_entry`.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
 from algo_trading.config.settings import Settings
 from algo_trading.domain.enums import AlgoState
@@ -104,3 +105,14 @@ class RiskManager:
 
     def lot_quantity(self, lot_size: int) -> int:
         return self._settings.lots * lot_size
+
+    def margin_ok(self, required_margin: Decimal, available_margin: Decimal) -> bool:
+        """True if available margin covers the requirement plus the configured buffer. Shorting
+        options requires margin; this gates a short entry. A non-positive requirement passes."""
+        if required_margin <= 0:
+            return True
+        needed = required_margin * (Decimal(1) + self._settings.margin_buffer)
+        ok = available_margin >= needed
+        if not ok:
+            log.warning("margin_insufficient", required=str(needed), available=str(available_margin))
+        return ok
