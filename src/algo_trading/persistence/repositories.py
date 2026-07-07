@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import Engine
 from sqlmodel import Session, select
@@ -42,15 +42,31 @@ def _instrument_to_row_fields(inst: Instrument) -> dict[str, object]:
     }
 
 
+def _safe_enum(enum_cls, value, default):
+    """Coerce a stored string to an enum, falling back for imported/odd rows."""
+    try:
+        return enum_cls(value)
+    except (ValueError, KeyError):
+        return default
+
+
+def _safe_decimal(value) -> Decimal:
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return Decimal(0)
+
+
 def _instrument_from_row(row: OrderRow | TradeRow) -> Instrument:
+    # Tolerant of imported broker rows whose underlying/option_type may not map to our enums.
     return Instrument(
-        underlying=Underlying(row.underlying),
-        exchange_segment=ExchangeSegment(row.exchange_segment),
+        underlying=_safe_enum(Underlying, row.underlying, Underlying.NIFTY),
+        exchange_segment=_safe_enum(ExchangeSegment, row.exchange_segment, ExchangeSegment.NSE_FO),
         trading_symbol=row.trading_symbol,
         instrument_token=row.instrument_token,
         expiry=date.today(),  # expiry not persisted on order/trade rows; not needed post-hoc
-        strike=Decimal(row.strike),
-        option_type=OptionType(row.option_type),
+        strike=_safe_decimal(row.strike),
+        option_type=_safe_enum(OptionType, row.option_type, OptionType.CE),
         lot_size=row.lot_size,
     )
 
@@ -146,6 +162,41 @@ class Repository:
                 )
             )
             session.commit()
+
+    def trade_exists(self, client_tag: str) -> bool:
+        with Session(self._engine) as session:
+            row = session.exec(
+                select(TradeRow).where(TradeRow.client_tag == client_tag)
+            ).first()
+            return row is not None
+
+    def record_broker_trade(self, fields: dict, trading_day: date | None = None) -> bool:
+        """Insert a trade imported from the broker's trade report. Deduplicated by client_tag
+        (typically 'trd-<fill_id>'). Returns True if inserted, False if it already existed."""
+        client_tag = fields["client_tag"]
+        if self.trade_exists(client_tag):
+            return False
+        with Session(self._engine) as session:
+            session.add(
+                TradeRow(
+                    client_tag=client_tag,
+                    broker_order_id=fields.get("broker_order_id"),
+                    trading_symbol=fields["trading_symbol"],
+                    instrument_token=fields.get("instrument_token", ""),
+                    underlying=fields.get("underlying", "NA"),
+                    exchange_segment=fields.get("exchange_segment", "nse_fo"),
+                    strike=str(fields.get("strike", "0")),
+                    option_type=fields.get("option_type", "NA"),
+                    lot_size=int(fields.get("lot_size", 0)),
+                    side=fields["side"],
+                    quantity=int(fields["quantity"]),
+                    price=str(fields["price"]),
+                    trading_day=_today_str(trading_day),
+                    timestamp=fields.get("timestamp") or datetime.utcnow(),
+                )
+            )
+            session.commit()
+        return True
 
     def trades_for_day(self, trading_day: date | None = None) -> list[Trade]:
         with Session(self._engine) as session:
