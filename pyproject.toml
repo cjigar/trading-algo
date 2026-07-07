@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "algo-trading"
+version = "0.1.0"
+description = "VWAP/price-action breakout algo for NIFTY & SENSEX weekly options via Kotak Neo"
+requires-python = ">=3.11"
+dependencies = [
+    # Kotak Neo v2 SDK is NOT on PyPI. Install it separately from the pinned tag:
+    #   pip install "git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.2#egg=neo_api_client"
+    # It is intentionally left out of this list so the rest of the package installs
+    # cleanly (and paper mode + the full test suite run without the broker SDK).
+    "pyotp>=2.9",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "pandas>=2.2",
+    "sqlmodel>=0.0.16",
+    "streamlit>=1.33",
+    "structlog>=24.1",
+    "apscheduler>=3.10",
+    "tenacity>=8.2",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+broker = [
+    # Convenience extra: `pip install -e ".[broker]"`
+    "neo_api_client @ git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.2",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.4",
+    "mypy>=1.9",
+    "freezegun>=1.4",
+]
+
+[project.scripts]
+algo-run = "algo_trading.entrypoints.run_algo:main"
+algo-dashboard = "algo_trading.entrypoints.run_dashboard:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+# E501: line length handled by formatter intent, not enforced.
+# UP042: `str, Enum` is a deliberate pattern (stable .value semantics) over StrEnum.
+# B027: Strategy.on_session_start is an intentional optional (non-abstract) hook.
+ignore = ["E501", "UP042", "B027"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["algo_trading"]
+mypy_path = "src"
+ignore_missing_imports = true
+warn_unused_ignores = true
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
