@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     sensex_index_token: str = ""
 
     # --- Strategy selection ---
-    strategy: str = "vwap_breakout"  # vwap_breakout | oi_selling
+    strategy: str = "oi_selling"  # oi_selling | vwap_breakout
 
     # --- Strategy parameters (PLACEHOLDERS — confirm before live) ---
     candle_timeframe_minutes: int = 5

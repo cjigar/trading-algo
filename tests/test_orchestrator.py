@@ -52,6 +52,7 @@ def _nifty_chain(expiry, strikes) -> ScripMaster:
 
 def _settings():
     s = get_settings(reload=True)
+    object.__setattr__(s, "strategy", "vwap_breakout")  # these tests exercise the candle-driven pipeline
     object.__setattr__(s, "mode", TradingMode.PAPER)
     object.__setattr__(s, "target_points", Decimal("30"))
     object.__setattr__(s, "trail_points", Decimal("10"))

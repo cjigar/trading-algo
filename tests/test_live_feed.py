@@ -54,6 +54,7 @@ class FakeNeo:
 
 def _settings(**overrides):
     s = get_settings(reload=True)
+    object.__setattr__(s, "strategy", "vwap_breakout")  # this test drives the candle pipeline
     object.__setattr__(s, "underlyings", [Underlying.NIFTY])
     object.__setattr__(s, "nifty_index_token", "256265")
     object.__setattr__(s, "sensex_index_token", "")

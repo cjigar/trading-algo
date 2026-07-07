@@ -31,6 +31,7 @@ def resolver():
 def _settings():
     s = get_settings(reload=True)
     object.__setattr__(s, "strike_window", 5)
+    object.__setattr__(s, "chain_feed_window", 0)  # 0 -> capture window follows strike_window (ignore .env)
     object.__setattr__(s, "strike_step", Decimal("50"))
     return s
 
