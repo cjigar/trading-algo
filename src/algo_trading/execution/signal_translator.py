@@ -47,7 +47,8 @@ class SignalTranslator:
                 option_type=signal.option_type,
                 selection=self._settings.strike_selection,
             )
-        quantity = self._settings.lots * instrument.lot_size
+        lot_size = self._settings.effective_lot_size(signal.underlying, instrument.lot_size)
+        quantity = self._settings.lots * lot_size
         return self._build(instrument, signal.side, quantity, option_ltp, is_exit=False)
 
     def build_exit(

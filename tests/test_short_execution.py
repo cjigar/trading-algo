@@ -104,3 +104,48 @@ def test_margin_check(engine):
     assert rm.margin_ok(Decimal("100000"), Decimal("120000")) is True   # 110k needed <= 120k
     assert rm.margin_ok(Decimal("100000"), Decimal("105000")) is False  # 110k needed > 105k
     assert rm.margin_ok(Decimal("0"), Decimal("0")) is True             # no requirement
+
+
+# -- Per-underlying lot-size override -------------------------------------------------
+
+
+def test_effective_lot_size_override():
+    from algo_trading.domain.enums import Underlying
+    s = get_settings(reload=True)
+    object.__setattr__(s, "nifty_lot_size", 65)
+    object.__setattr__(s, "sensex_lot_size", 20)
+    assert s.effective_lot_size(Underlying.NIFTY, 75) == 65   # override wins
+    assert s.effective_lot_size(Underlying.SENSEX, 25) == 20
+    # 0 override -> fall back to the scrip lot size
+    object.__setattr__(s, "nifty_lot_size", 0)
+    assert s.effective_lot_size(Underlying.NIFTY, 75) == 75
+
+
+def test_translator_uses_configured_lot_size():
+    from datetime import UTC, datetime
+    from decimal import Decimal
+
+    import pandas as pd
+    from freezegun import freeze_time
+
+    from algo_trading.domain.enums import ExchangeSegment, OptionType, Side, Underlying
+    from algo_trading.domain.models import Signal
+    from algo_trading.execution.signal_translator import SignalTranslator
+    from algo_trading.instruments.option_resolver import WeeklyOptionResolver
+    from algo_trading.instruments.scrip_master import ScripMaster
+
+    rows = []
+    for k in range(22800, 23400, 50):
+        for ot in ("CE", "PE"):
+            rows.append({"pTrdSymbol": f"NIFTY{k}{ot}", "pSymbol": f"{k}{ot}", "pSymbolName": "NIFTY",
+                         "pExpiryDate": "2099-01-30", "dStrikePrice": k, "pOptionType": ot, "lLotSize": 75})
+    sm = ScripMaster.from_dataframe(pd.DataFrame(rows), ExchangeSegment.NSE_FO)
+    s = get_settings(reload=True)
+    object.__setattr__(s, "nifty_lot_size", 65)
+    object.__setattr__(s, "lots", 2)
+    sig = Signal(underlying=Underlying.NIFTY, side=Side.SELL, option_type=OptionType.CE,
+                 reference_price=Decimal("23000"), timestamp=datetime(2099, 1, 20, tzinfo=UTC),
+                 target_strike=Decimal("23200"))
+    with freeze_time("2099-01-27"):
+        req = SignalTranslator(s, WeeklyOptionResolver(sm)).translate(sig)
+    assert req.quantity == 130  # 2 lots × 65 (configured), not × 75 (scrip)

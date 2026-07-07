@@ -81,8 +81,12 @@ class Settings(BaseSettings):
     # NSE trading holidays (ISO dates) on which the strategy takes no entries. Operator-supplied.
     market_holidays: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
-    # --- Risk ---
+    # --- Risk / sizing ---
     lots: int = 1
+    # Per-underlying lot size override (0 = use the scrip master's lot size). Set to force a known
+    # contract size instead of trusting the scrip file.
+    nifty_lot_size: int = 0
+    sensex_lot_size: int = 0
     daily_loss_cap: Decimal = Decimal("5000")  # absolute rupees (positive number)
     max_positions: int = 1
     max_trades_per_day: int = 5
@@ -154,6 +158,15 @@ class Settings(BaseSettings):
     def weekdays_for(self, underlying: Underlying) -> list[int]:
         """Weekdays this underlying may take entries (NIFTY Fri/Mon/Tue, SENSEX Wed/Thu)."""
         return self.allowed_weekdays if underlying is Underlying.NIFTY else self.sensex_weekdays
+
+    def lot_size_for(self, underlying: Underlying) -> int:
+        """Configured lot-size override for an underlying (0 = use the scrip master's lot size)."""
+        return self.nifty_lot_size if underlying is Underlying.NIFTY else self.sensex_lot_size
+
+    def effective_lot_size(self, underlying: Underlying, scrip_lot_size: int) -> int:
+        """Lot size to use for sizing: the configured override if set, else the scrip's value."""
+        override = self.lot_size_for(underlying)
+        return override if override > 0 else scrip_lot_size
 
     def resolved_database_url(self) -> str:
         """Return the configured database URL, or a local SQLite URL derived from db_path."""
