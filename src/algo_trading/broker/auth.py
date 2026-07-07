@@ -49,12 +49,15 @@ class SessionManager:
 
     def _current_totp(self) -> str:
         secret = self._secrets.totp_secret.get_secret_value().strip()
-        if not secret:
-            raise AuthError("KOTAK_TOTP_SECRET is not set (required for Kotak Neo API login).")
-        try:
-            return pyotp.TOTP(secret).now()
-        except Exception as exc:  # noqa: BLE001
-            raise AuthError(f"Invalid KOTAK_TOTP_SECRET (must be base32): {exc}") from exc
+        if secret:
+            try:
+                return pyotp.TOTP(secret).now()
+            except Exception as exc:  # noqa: BLE001
+                raise AuthError(f"Invalid KOTAK_TOTP_SECRET (must be base32): {exc}") from exc
+        manual = self._secrets.totp.get_secret_value().strip()
+        if manual:
+            return manual  # one-shot: a code the operator pasted (expires in ~30s)
+        raise AuthError("No TOTP source: set KOTAK_TOTP_SECRET (base32) or KOTAK_TOTP (6-digit).")
 
     def login(self) -> Any:
         """Perform totp_login -> totp_validate and return the authenticated client."""
@@ -77,12 +80,12 @@ class SessionManager:
             return neo
 
     def _build_client(self, neo_cls: Any) -> Any:
-        """Construct NeoAPI. This SDK's constructor takes only consumer_key (+ environment)."""
+        """Construct NeoAPI with the NEO-app access token + static neo_fin_key (per Kotak docs)."""
         return neo_cls(
             environment=self._settings.kotak_environment,
-            access_token=None,
-            neo_fin_key=None,
-            consumer_key=self._secrets.consumer_key.get_secret_value(),
+            access_token=self._secrets.access_token.get_secret_value(),
+            neo_fin_key=self._settings.kotak_neo_fin_key,
+            consumer_key=self._secrets.consumer_key.get_secret_value() or None,
         )
 
     def _do_login(self, neo: Any) -> Any:

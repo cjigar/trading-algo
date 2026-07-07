@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     # Must equal "YES" (exactly) for live orders to be armed. Guards against accidental live runs.
     confirm_live: str = ""
     kotak_environment: str = "prod"
+    # Static value required by the Kotak Neo login APIs (neo-fin-key header).
+    kotak_neo_fin_key: str = "neotradeapi"
 
     # --- Persistence ---
     # Full SQLAlchemy URL (e.g. postgresql+psycopg://user:pass@db:5432/algo). When empty,
