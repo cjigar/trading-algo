@@ -27,6 +27,10 @@ run:
 dashboard:
 	streamlit run src/algo_trading/entrypoints/run_dashboard.py
 
+# Read-only live-API validation (no orders). Requires the broker SDK + credentials + index tokens.
+validate-live:
+	python -m algo_trading.tools.validate_live
+
 clean:
 	rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
