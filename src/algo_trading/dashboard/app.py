@@ -10,6 +10,7 @@ from __future__ import annotations
 from algo_trading.config.settings import get_settings
 from algo_trading.dashboard.state_bridge import StateBridge
 from algo_trading.domain.enums import AlgoState
+from algo_trading.reporting import summarize_fills
 
 
 def render() -> None:  # pragma: no cover - requires the Streamlit runtime
@@ -51,6 +52,38 @@ def render() -> None:  # pragma: no cover - requires the Streamlit runtime
     m4.metric("Day P&L", f"{state.day_pnl:,.2f}")
 
     st.caption(f"Daily loss cap: {settings.daily_loss_cap} | Max positions: {settings.max_positions}")
+
+    # --- Today's P&L from fills ---
+    st.subheader("Today's P&L (from fills)")
+    summary = summarize_fills(state.trades)
+    if summary.trade_count:
+        p1, p2, p3, p4 = st.columns(4)
+        p1.metric("Realized P&L (matched)", f"{summary.total_realized:,.2f}")
+        p2.metric("Fills", summary.trade_count)
+        p3.metric("Buy value", f"{summary.total_buy_value:,.0f}")
+        p4.metric("Sell value", f"{summary.total_sell_value:,.0f}")
+        st.caption(
+            f"{summary.matched_symbols} symbol(s) with matched round-trips; "
+            f"{summary.open_symbols} with an open (unmatched) position. "
+            "Realized = matched_qty × (avg sell − avg buy) per symbol; open qty is unrealized."
+        )
+        st.dataframe(
+            [
+                {
+                    "symbol": r.symbol,
+                    "buy qty": r.buy_qty,
+                    "sell qty": r.sell_qty,
+                    "avg buy": float(r.avg_buy),
+                    "avg sell": float(r.avg_sell),
+                    "net qty": r.net_qty,
+                    "realized P&L": float(r.realized_pnl),
+                }
+                for r in summary.per_symbol
+            ],
+            use_container_width=True,
+        )
+    else:
+        st.write("No fills today.")
 
     # --- Positions ---
     st.subheader("Open positions")
