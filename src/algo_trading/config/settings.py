@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     underlyings: Annotated[list[Underlying], NoDecode] = Field(
         default_factory=lambda: [Underlying.NIFTY, Underlying.SENSEX]
     )
+    # Instrument tokens for the underlying INDEX spot LTP (from Kotak's index scrip list).
+    # Required for the live quote feed to build candles — set before live/paper-with-feed runs.
+    nifty_index_token: str = ""
+    sensex_index_token: str = ""
 
     # --- Strategy parameters (PLACEHOLDERS — confirm before live) ---
     candle_timeframe_minutes: int = 5
@@ -90,6 +94,12 @@ class Settings(BaseSettings):
             hh, mm = v.split(":")[:2]
             return time(int(hh), int(mm))
         return v
+
+    def index_token_for(self, underlying: Underlying) -> str:
+        """Configured index-spot instrument token for an underlying ('' if unset)."""
+        return (
+            self.nifty_index_token if underlying is Underlying.NIFTY else self.sensex_index_token
+        ).strip()
 
     def resolved_database_url(self) -> str:
         """Return the configured database URL, or a local SQLite URL derived from db_path."""

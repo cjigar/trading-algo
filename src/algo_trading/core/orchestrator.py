@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import threading
 from decimal import Decimal
+from typing import Any
 
 from algo_trading.broker.base import BrokerClient
 from algo_trading.config.secrets import KotakSecrets, load_secrets
@@ -54,9 +55,12 @@ class Orchestrator:
         strategy: Strategy | None = None,
         secrets: KotakSecrets | None = None,
         repo: Repository | None = None,
+        neo_client: Any = None,
     ) -> None:
         self._settings = settings or get_settings()
         self._secrets = secrets
+        self._neo_client = neo_client  # authenticated Kotak client (live mode)
+        self._coordinator: Any = None  # LiveFeedCoordinator, set by attach_live_feeds()
         self._bus = EventBus()
         self._ltp: dict[str, Decimal] = {}  # instrument_token -> last ltp
         self._underlying_token: dict[str, Underlying] = {}  # index token -> underlying
@@ -95,14 +99,16 @@ class Orchestrator:
         return PaperBroker(ltp_provider=lambda token: self._ltp.get(token))
 
     def _build_live_broker(self) -> BrokerClient:  # pragma: no cover - needs the SDK + creds
-        from algo_trading.broker.auth import SessionManager
         from algo_trading.broker.kotak_client import KotakClient
 
-        secrets = self._secrets or load_secrets()
-        session = SessionManager(self._settings, secrets)
-        neo = session.login()
-        client = KotakClient(self._settings, neo_client=neo)
-        self._session = session
+        if self._neo_client is None:
+            # No pre-authenticated client supplied: log in here.
+            from algo_trading.broker.auth import SessionManager
+
+            session = SessionManager(self._settings, self._secrets or load_secrets())
+            self._neo_client = session.login()
+            self._session = session
+        client = KotakClient(self._settings, neo_client=self._neo_client)
         log.warning("broker_live_mode_armed")
         return client
 
@@ -134,6 +140,39 @@ class Orchestrator:
     def stop_session(self) -> None:
         self._risk.stop_session()
         log.info("session_stopped")
+
+    def attach_live_feeds(self) -> bool:
+        """Wire the live Kotak websockets into the pipeline. No-op without an authenticated
+        client (paper mode). Returns True if the live feed was started."""
+        if self._neo_client is None:
+            log.info("live_feeds_skipped", reason="no authenticated client (paper mode)")
+            return False
+        from algo_trading.broker.live_feed import LiveFeedCoordinator
+
+        coordinator = LiveFeedCoordinator(
+            self._settings,
+            self._neo_client,
+            on_tick=self.publish_tick,
+            on_order_event=self.publish_order_event,
+        )
+        # Map each configured index token to its underlying so index ticks build candles.
+        subscribed = []
+        for u in self._settings.underlyings:
+            token = self._settings.index_token_for(u)
+            if token:
+                self.register_index_token(token, u)
+                subscribed.append(u.value)
+        coordinator.start()
+        self._coordinator = coordinator
+        if not subscribed:
+            log.warning("no_index_tokens_configured",
+                        hint="set ALGO_NIFTY_INDEX_TOKEN / ALGO_SENSEX_INDEX_TOKEN")
+        log.info("live_feeds_attached", underlyings=subscribed)
+        return True
+
+    def feed_is_stale(self) -> bool:
+        """True if the live quote feed has gone stale (used as a halt condition)."""
+        return self._coordinator is not None and self._coordinator.is_stale()
 
     # -- Tick handling -----------------------------------------------------------------
 
@@ -188,6 +227,11 @@ class Orchestrator:
             # entry fill -> arm exits and remember the option token->symbol mapping
             self._exits.register(trade.instrument, trade.quantity, trade.price)
             self._exit_symbol_token[trade.instrument.instrument_token] = symbol
+            # subscribe to the option's live quotes so exits get its LTP (live mode)
+            if self._coordinator is not None:
+                self._coordinator.subscribe_option(
+                    trade.instrument.instrument_token, trade.instrument.exchange_segment
+                )
         else:
             # exit fill -> stop tracking exits for this symbol
             self._exits.unregister(symbol)

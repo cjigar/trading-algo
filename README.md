@@ -25,7 +25,7 @@ Package layout (`src/algo_trading/`):
 | `config/` | Typed settings + secret loading |
 | `domain/` | Enums and immutable data models |
 | `persistence/` | DB schema + repositories (append-only audit; SQLite or Postgres) |
-| `broker/` | Kotak Neo client wrapper, auth/session, market-data & order websockets |
+| `broker/` | Kotak client wrapper, auth/session, market-data & order websockets, live-feed coordinator |
 | `instruments/` | Scrip-master ingestion + weekly-option resolver |
 | `strategy/` | Candle builder, indicators (VWAP/ATR), pluggable strategies |
 | `execution/` | Signal→order translation, order lifecycle, position tracking, exits, paper fills |
@@ -67,6 +67,29 @@ make docker-down           # stop
 - The database is selected by `ALGO_DATABASE_URL`: Compose sets it to the Postgres service automatically; locally it's unset, so the app falls back to SQLite (`ALGO_DB_PATH`). The same code and schema run on both.
 - To bake the Kotak SDK into the image (for live mode), build with `INSTALL_BROKER=1` (env var or `--build-arg`).
 - Postgres data persists in the `pgdata` volume; `make docker-down` keeps it (`docker compose down -v` wipes it).
+
+## Live market-data feed
+
+In live mode the loop connects the Kotak websockets. `LiveFeedCoordinator` (`broker/live_feed.py`)
+subscribes the **underlying index feeds** (so candles build) and the **order feed**, routes each
+incoming message to the quote or order handler, and subscribes an option's quotes when a position
+opens (so exits get its LTP). Wiring is `run_algo → Orchestrator.attach_live_feeds()`; it's a no-op
+in paper mode (no authenticated client), so the loop stays idle until a feed is attached.
+
+To get real ticks flowing (candles → signals → fills):
+
+1. Set the index-spot tokens in `.env` — `ALGO_NIFTY_INDEX_TOKEN`, `ALGO_SENSEX_INDEX_TOKEN`
+   (from Kotak's index scrip list).
+2. Build the image with the SDK and run in live mode:
+   ```bash
+   INSTALL_BROKER=1 docker compose build
+   # .env: ALGO_MODE=live + ALGO_CONFIRM_LIVE=YES to arm the feed + real orders
+   make docker-up
+   ```
+
+The message-type routing heuristic (`is_order_message`) and the exact index tokens may need small
+adjustments against your live SDK/account — both are isolated in `broker/live_feed.py` and
+`broker/order_feed.py`.
 
 ## Quality
 

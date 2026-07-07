@@ -40,7 +40,11 @@ def build_orchestrator() -> Orchestrator:
         neo_client = session.login()
 
     scrip_master = load_scrip_master(settings, neo_client=neo_client)
-    orch = Orchestrator(settings, scrip_master=scrip_master, secrets=secrets)
+    # Pass the already-authenticated client so the orchestrator reuses it for both the broker
+    # and the live websocket feeds (no second login).
+    orch = Orchestrator(
+        settings, scrip_master=scrip_master, secrets=secrets, neo_client=neo_client
+    )
     return orch
 
 
@@ -51,6 +55,8 @@ def main() -> None:
 
     orch = build_orchestrator()
     orch.start_session()
+    # Attach the live Kotak websocket feeds (no-op in paper mode without an authenticated client).
+    orch.attach_live_feeds()
 
     scheduler = MarketScheduler(
         settings,

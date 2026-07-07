@@ -51,6 +51,21 @@ def _to_int(value: Any) -> int:
         return 0
 
 
+# Keys that identify a message as an order/trade update rather than a price quote.
+_ORDER_KEYS = ("ordSt", "orderStatus", "nOrdNo", "usrOrdId", "rejRsn", "tag", "fldQty")
+
+
+def is_order_message(raw: dict) -> bool:
+    """Heuristic: True if a raw websocket message is an order/trade update (vs a price quote).
+
+    Kotak multiplexes order and quote updates through one on_message callback; this decides
+    which handler a message belongs to. Adjust here if your SDK tags messages differently.
+    """
+    if raw.get("type") in ("order", "order_feed", "trade"):
+        return True
+    return any(k in raw for k in _ORDER_KEYS)
+
+
 def normalize_order_event(raw: dict, *, now: datetime | None = None) -> OrderEvent | None:
     """Convert a raw order-feed message into an :class:`OrderEvent`, or None if unrecognized."""
     tag = raw.get("tag") or raw.get("usrOrdId") or raw.get("client_tag")

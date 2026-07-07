@@ -108,15 +108,18 @@ class FeedHandler:
     def _handle_message(self, message: Any) -> None:
         records = message if isinstance(message, list) else [message]
         for raw in records:
-            if not isinstance(raw, dict):
-                continue
-            tick = normalize_tick(raw)
-            if tick is not None:
-                self._last_tick_at = self._clock()
-                try:
-                    self._on_tick(tick)
-                except Exception:  # noqa: BLE001 - never let a consumer error kill the feed
-                    log.exception("tick_consumer_error")
+            if isinstance(raw, dict):
+                self.handle_raw(raw)
+
+    def handle_raw(self, raw: dict) -> None:
+        """Normalize a single raw quote record into a Tick and publish it."""
+        tick = normalize_tick(raw)
+        if tick is not None:
+            self._last_tick_at = self._clock()
+            try:
+                self._on_tick(tick)
+            except Exception:  # noqa: BLE001 - never let a consumer error kill the feed
+                log.exception("tick_consumer_error")
 
     def _handle_error(self, error: Any) -> None:
         log.warning("quote_ws_error", error=str(error))

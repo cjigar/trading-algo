@@ -31,14 +31,22 @@ class Underlying(str, Enum):
 
 
 class ExchangeSegment(str, Enum):
-    """Kotak Neo exchange segments. NIFTY options trade on NSE F&O, SENSEX on BSE F&O."""
+    """Kotak Neo exchange segments. NIFTY options trade on NSE F&O, SENSEX on BSE F&O;
+    the underlying index spot LTP is quoted on the cash segments (nse_cm / bse_cm)."""
 
     NSE_FO = "nse_fo"
     BSE_FO = "bse_fo"
+    NSE_CM = "nse_cm"
+    BSE_CM = "bse_cm"
 
     @classmethod
     def for_underlying(cls, underlying: Underlying) -> ExchangeSegment:
         return cls.NSE_FO if underlying is Underlying.NIFTY else cls.BSE_FO
+
+    @classmethod
+    def index_for_underlying(cls, underlying: Underlying) -> ExchangeSegment:
+        """Cash segment on which the underlying's index spot LTP is quoted."""
+        return cls.NSE_CM if underlying is Underlying.NIFTY else cls.BSE_CM
 
 
 class ProductType(str, Enum):
