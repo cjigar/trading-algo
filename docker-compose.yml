@@ -79,7 +79,7 @@ services:
       ALGO_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-algo}:${POSTGRES_PASSWORD:-algo}@db:5432/${POSTGRES_DB:-algo}
       WEB_AUTH_PASSWORD: ${WEB_AUTH_PASSWORD:-changeme}
       WEB_AUTH_SECRET: ${WEB_AUTH_SECRET:-dev-insecure-secret-change-me}
-      WEB_CORS_ORIGINS: ${WEB_CORS_ORIGINS:-http://localhost:3000}
+      WEB_CORS_ORIGINS: ${WEB_CORS_ORIGINS:-http://localhost:3000,http://localhost:3001}
     ports:
       - "8000:8000"
 
@@ -95,7 +95,7 @@ services:
     depends_on:
       - api
     ports:
-      - "3000:3000"
+      - "3001:3000"
 
 volumes:
   pgdata:

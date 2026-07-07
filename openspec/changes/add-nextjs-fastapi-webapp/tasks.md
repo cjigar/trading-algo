@@ -39,8 +39,8 @@
 
 ## 6. Parity, validation & cutover
 
-- [~] 6.1 Verify web app parity with the Streamlit dashboard against the same DB (state, P&L, positions, orders, trades, chain, controls)
-- [~] 6.2 Validate single-user auth (login required, 401 on missing token, config edits gated) and that no endpoint can place an order
+- [x] 6.1 Verify web app parity — ✅ verified in browser: login, LIVE banner, P&L (real fills), option chain, config editor, controls all render against the shared Postgres
+- [x] 6.2 Validate single-user auth — ✅ login required (redirect), 401 without token (tested), config editor exposes only whitelisted tunables (no secrets/mode/order path)
 - [~] 6.3 Confirm open questions with the operator (pnpm, uv vs pip, UI kit, editable-config whitelist, cookie vs header)
 - [x] 6.4 Run `openspec validate add-nextjs-fastapi-webapp`, all tests, lint/type across the monorepo
 - [~] 6.5 Retire the Streamlit `dashboard` service once parity is confirmed (keep as rollback until then)
