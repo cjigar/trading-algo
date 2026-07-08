@@ -19,6 +19,7 @@ from algo_trading.persistence.db import (
     AlgoStateRow,
     AuditEventRow,
     BrokerOrderRow,
+    BrokerPositionRow,
     ControlCommandRow,
     OptionChainSnapshotRow,
     OrderEventRow,
@@ -166,6 +167,29 @@ class Repository:
             session.commit()
 
     # -- Option-chain snapshots (append-only time series) ------------------------------
+
+    def replace_broker_positions(self, positions: list[dict], trading_day: date | None = None) -> int:
+        """Replace the stored broker-position snapshot with the current set (raw broker dicts).
+        Positions are point-in-time, so we clear and re-insert rather than append."""
+        day = _today_str(trading_day)
+        with Session(self._engine) as session:
+            session.exec(delete(BrokerPositionRow))
+            for p in positions:
+                session.add(BrokerPositionRow(trading_day=day, raw=json.dumps(p, default=str)))
+            session.commit()
+        return len(positions)
+
+    def latest_broker_positions(self) -> list[dict]:
+        """The most recently captured broker positions as raw dicts (empty if none captured)."""
+        with Session(self._engine) as session:
+            rows = list(session.exec(select(BrokerPositionRow).order_by(col(BrokerPositionRow.id))))
+        out: list[dict] = []
+        for row in rows:
+            try:
+                out.append(json.loads(row.raw))
+            except (json.JSONDecodeError, TypeError):
+                continue
+        return out
 
     def write_chain_snapshots(self, rows: list[dict], trading_day: date | None = None) -> int:
         """Bulk-insert option-chain snapshot rows. Each dict: underlying, strike, option_type,

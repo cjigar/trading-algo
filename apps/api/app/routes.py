@@ -80,6 +80,12 @@ def get_trades(bridge: StateBridge = Depends(get_bridge)):
     return trades_out(bridge.read_state())
 
 
+@api.get("/broker-positions")
+def get_broker_positions(bridge: StateBridge = Depends(get_bridge)) -> list[dict[str, Any]]:
+    """Live broker positions captured at the algo's last reconcile (raw broker fields)."""
+    return bridge.broker_positions()
+
+
 @api.get("/chain", response_model=ChainOut)
 def get_chain(
     underlying: str | None = None,

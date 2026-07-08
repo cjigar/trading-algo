@@ -173,6 +173,19 @@ class BrokerOrderRow(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class BrokerPositionRow(SQLModel, table=True):
+    """A snapshot of one open broker position captured at reconcile. The raw broker dict is kept
+    as JSON so the view is resilient to the broker's field naming; the whole set is replaced on
+    each capture (positions are a point-in-time snapshot, not an event log)."""
+
+    __tablename__ = "broker_positions"
+
+    id: int | None = Field(default=None, primary_key=True)
+    trading_day: str = Field(index=True)
+    raw: str = "{}"  # JSON-encoded raw broker position dict
+    captured_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
 def create_db_engine(db_path: str | Path) -> Engine:
     """Create (and initialize) a SQLite engine at ``db_path`` (local dev / tests)."""
     path = Path(db_path)

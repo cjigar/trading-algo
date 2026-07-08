@@ -12,6 +12,7 @@ export default function Dashboard() {
   const { data, connected } = useStream();
   const [tab, setTab] = useState("P&L");
   const [positions, setPositions] = useState<Position[]>([]);
+  const [brokerPositions, setBrokerPositions] = useState<Record<string, unknown>[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [config, setConfig] = useState<Record<string, unknown>>({});
@@ -21,10 +22,12 @@ export default function Dashboard() {
   const [chainView, setChainView] = useState<Chain | null>(null);
 
   const refresh = useCallback(async () => {
-    const [p, o, t, c, ch] = await Promise.all([
-      api.positions(), api.orders(), api.trades(), api.config(), api.chain(chainUnderlying ?? undefined),
+    const [p, bp, o, t, c, ch] = await Promise.all([
+      api.positions(), api.brokerPositions(), api.orders(), api.trades(), api.config(),
+      api.chain(chainUnderlying ?? undefined),
     ]);
     setPositions(p);
+    setBrokerPositions(bp);
     setOrders(o);
     setTrades(t);
     setConfig(c);
@@ -90,7 +93,23 @@ export default function Dashboard() {
           <DataTable rows={pnl.per_symbol as unknown as Record<string, unknown>[]} />
         </div>
       )}
-      {tab === "Positions" && <DataTable rows={positions as unknown as Record<string, unknown>[]} />}
+      {tab === "Positions" && (
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <h2 className="text-sm font-medium text-neutral-300">Algo positions (this session)</h2>
+            <DataTable rows={positions as unknown as Record<string, unknown>[]} />
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-sm font-medium text-neutral-300">
+              Broker positions (live account) · {brokerPositions.length}
+            </h2>
+            <p className="text-xs text-neutral-500">
+              Captured from the broker at the algo&apos;s last reconcile (startup). Includes positions opened outside this algo.
+            </p>
+            <DataTable rows={brokerPositions} />
+          </div>
+        </div>
+      )}
       {tab === "Orders" && <DataTable rows={orders as unknown as Record<string, unknown>[]} />}
       {tab === "Trades" && <DataTable rows={trades as unknown as Record<string, unknown>[]} />}
       {tab === "Option Chain" && (

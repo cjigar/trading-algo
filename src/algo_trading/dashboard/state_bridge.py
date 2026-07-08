@@ -61,6 +61,10 @@ class StateBridge:
         """Latest option-chain snapshots, optionally filtered to one underlying."""
         return self._repo.latest_chain_state(underlying=underlying)
 
+    def broker_positions(self) -> list[dict]:
+        """The live broker positions captured at the last reconcile (raw broker dicts)."""
+        return self._repo.latest_broker_positions()
+
     # -- Control commands (consumed by the orchestrator) -------------------------------
 
     def send_start(self) -> None:

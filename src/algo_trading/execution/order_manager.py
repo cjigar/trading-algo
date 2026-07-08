@@ -158,6 +158,15 @@ class OrderManager:
             log.warning("reconcile_positions_failed", error=str(exc))
             positions = []
 
+        # Persist the live broker positions so the dashboard can surface existing exposure,
+        # and log each one for immediate visibility on startup.
+        try:
+            self._repo.replace_broker_positions(positions)
+            for p in positions:
+                log.info("broker_position", **{str(k): v for k, v in p.items()})
+        except Exception as exc:  # noqa: BLE001 - persistence/logging must not block reconcile
+            log.warning("broker_positions_persist_failed", error=str(exc))
+
         # Apply any terminal states the broker reports for orders we still consider open.
         applied = 0
         by_tag = {}

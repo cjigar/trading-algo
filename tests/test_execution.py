@@ -89,6 +89,27 @@ def test_reconcile_marks_terminal_from_report(engine):
     assert repo.get_order_state("open1") == "FILLED"
 
 
+def test_reconcile_persists_broker_positions(engine):
+    repo = Repository(engine)
+
+    class PositionedBroker(PaperBroker):
+        def positions(self):
+            return [{"trdSym": "SENSEX24500CE", "netQty": "-20", "prod": "NRML"},
+                    {"trdSym": "NIFTY23000PE", "netQty": "65", "prod": "MIS"}]
+
+    om = OrderManager(PositionedBroker(), repo, get_settings())
+    summary = om.reconcile()
+    assert summary["broker_positions"] == 2
+    stored = repo.latest_broker_positions()
+    assert {p["trdSym"] for p in stored} == {"SENSEX24500CE", "NIFTY23000PE"}
+    # replace-on-capture: a later reconcile with fewer positions overwrites, not appends
+    class OneLeft(PaperBroker):
+        def positions(self):
+            return [{"trdSym": "NIFTY23000PE", "netQty": "65"}]
+    OrderManager(OneLeft(), repo, get_settings()).reconcile()
+    assert len(repo.latest_broker_positions()) == 1
+
+
 # -- Position tracker ------------------------------------------------------------------
 
 

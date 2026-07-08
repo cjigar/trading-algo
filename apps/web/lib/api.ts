@@ -46,6 +46,7 @@ export const api = {
   positions: () => request<Position[]>("/api/positions"),
   orders: () => request<Order[]>("/api/orders"),
   trades: () => request<Trade[]>("/api/trades"),
+  brokerPositions: () => request<Record<string, unknown>[]>("/api/broker-positions"),
   chain: (underlying?: string) =>
     request<Chain>(`/api/chain${underlying ? `?underlying=${encodeURIComponent(underlying)}` : ""}`),
   config: () => request<Record<string, unknown>>("/api/config"),
