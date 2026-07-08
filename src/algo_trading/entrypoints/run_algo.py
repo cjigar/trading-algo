@@ -80,10 +80,18 @@ def main() -> None:
     log.info("running", strategy=settings.strategy)
     try:
         while not stop["flag"]:  # pragma: no cover - long-running loop
-            orch.process_control_commands()
+            # A transient error (e.g. a broker response we can't parse) must never kill the
+            # loop — it would stop command processing and the scheduled square-off safety net.
+            try:
+                orch.process_control_commands()
+            except Exception:  # noqa: BLE001
+                log.exception("control_command_processing_failed")
             elapsed += 1
             if settings.strategy == "oi_selling" and elapsed >= eval_every:
-                orch.evaluate_oi()
+                try:
+                    orch.evaluate_oi()
+                except Exception:  # noqa: BLE001
+                    log.exception("oi_evaluation_failed")
                 elapsed = 0
             time.sleep(1.0)
     finally:

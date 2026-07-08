@@ -98,6 +98,34 @@ def test_oi_pe_side_when_pe_oi_dominates(scrip, engine):
     assert orch.positions.position_for("NIFTY22900PE") is not None  # ATM 23050 - 3*50
 
 
+class _ExplodingBroker(PaperBroker):
+    """A broker whose place_order fails the way Kotak did (unparseable response)."""
+
+    def place_order(self, request):  # type: ignore[override]
+        from algo_trading.broker.base import BrokerError
+
+        raise BrokerError("Could not extract order id from response")
+
+
+def test_oi_broker_error_does_not_crash_or_count_entry(scrip, engine):
+    # Regression: a broker failure on sell-to-open must not propagate out of evaluate_oi
+    # (which would kill the trading loop) and must not be recorded as an entry.
+    s = _oi_settings()
+    orch = Orchestrator(s, scrip_master=scrip, broker=_ExplodingBroker(), repo=Repository(engine))
+    orch.register_index_token(IDX, Underlying.NIFTY)
+    orch.start_session()
+    _feed_chain(orch, ce_oi=5000, pe_oi=1000)
+
+    orch.evaluate_oi(now=FRIDAY)  # must not raise
+
+    assert orch.positions.open_position_count() == 0
+    assert len(orch.repo.trades_for_day()) == 0
+    assert orch.risk.entries_today == 0  # a failed submit is not an entry
+    # a second evaluation still works (loop survived) and still opens nothing
+    orch.evaluate_oi(now=FRIDAY)
+    assert orch.positions.open_position_count() == 0
+
+
 def test_oi_no_entry_on_disallowed_day(scrip, engine):
     orch = _build(scrip, engine)
     _feed_chain(orch, ce_oi=5000, pe_oi=1000)

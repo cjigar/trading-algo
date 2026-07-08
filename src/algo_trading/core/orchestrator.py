@@ -295,7 +295,12 @@ class Orchestrator:
         if not self._short_margin_ok(request):
             log.info("entry_blocked", reason="insufficient margin")
             return
-        self._orders.submit(request)  # sell-to-open
+        try:
+            self._orders.submit(request)  # sell-to-open
+        except Exception:  # noqa: BLE001 - a broker/submit failure must not kill the trading loop
+            log.exception("short_order_submit_failed",
+                          symbol=request.instrument.trading_symbol, quantity=request.quantity)
+            return  # do not count a failed submit as an entry
         self._risk.register_entry()
 
     def _short_margin_ok(self, request) -> bool:
