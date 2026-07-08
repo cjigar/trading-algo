@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from algo_trading.domain.enums import Side
 from algo_trading.domain.models import Trade
-from algo_trading.reporting import summarize_fills
+from algo_trading.reporting import summarize_broker_positions, summarize_fills
 from tests.conftest import make_instrument
 
 
@@ -97,3 +97,26 @@ def test_summarize_chain_empty():
     from algo_trading.reporting import summarize_chain
     s = summarize_chain([])
     assert s.per_strike == [] and s.ce_oi_total == 0 and s.selected_side == "—"
+
+def test_broker_positions_realized_and_open():
+    # A squared position (buy 200 @183.31, sell 200 @189.585) and a fully-open short.
+    rows = [
+        {"trdSym": "SENSEX77800CE", "flBuyQty": "200", "flSellQty": "200",
+         "buyAmt": "36662.00", "sellAmt": "37917.00"},
+        {"trdSym": "SENSEX77500PE", "flBuyQty": "0", "flSellQty": "200",
+         "buyAmt": "0.00", "sellAmt": "31324.00"},
+    ]
+    s = summarize_broker_positions(rows)
+    assert s.total_realized == Decimal("1255.00")   # only the squared leg books P&L
+    assert s.open_count == 1
+    squared = next(p for p in s.per_position if p.symbol == "SENSEX77800CE")
+    assert squared.net_qty == 0 and not squared.is_open
+    short = next(p for p in s.per_position if p.symbol == "SENSEX77500PE")
+    assert short.net_qty == -200 and short.is_open
+    assert short.realized_pnl == Decimal("0")       # no matched qty yet
+
+
+def test_broker_positions_handles_blank_fields():
+    s = summarize_broker_positions([{"trdSym": "X", "flBuyQty": "", "flSellQty": "",
+                                     "buyAmt": "", "sellAmt": ""}])
+    assert s.total_realized == Decimal("0") and s.open_count == 0

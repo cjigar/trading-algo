@@ -15,12 +15,14 @@ from algo_trading.dashboard.state_bridge import StateBridge
 from app.config import WebSettings, get_web_settings
 from app.deps import get_bridge, get_engine_settings
 from app.schemas import (
+    BrokerPnLOut,
     ChainOut,
     OrderOut,
     PnLOut,
     PositionOut,
     StateOut,
     TradeOut,
+    broker_pnl_out,
     chain_out,
     orders_out,
     pnl_out,
@@ -84,6 +86,12 @@ def get_trades(bridge: StateBridge = Depends(get_bridge)):
 def get_broker_positions(bridge: StateBridge = Depends(get_bridge)) -> list[dict[str, Any]]:
     """Live broker positions captured at the algo's last reconcile (raw broker fields)."""
     return bridge.broker_positions()
+
+
+@api.get("/broker-pnl", response_model=BrokerPnLOut)
+def get_broker_pnl(bridge: StateBridge = Depends(get_bridge)):
+    """Realized day P&L computed from the captured broker positions (matched-qty method)."""
+    return broker_pnl_out(bridge.broker_positions())
 
 
 @api.get("/chain", response_model=ChainOut)

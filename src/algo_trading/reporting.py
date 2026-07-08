@@ -93,6 +93,64 @@ def _to_decimal(v: object) -> Decimal:
         return Decimal(0)
 
 
+@dataclass(frozen=True)
+class BrokerPositionPnL:
+    symbol: str
+    net_qty: int  # >0 open long, <0 open short, 0 fully squared
+    buy_qty: int
+    sell_qty: int
+    avg_buy: Decimal
+    avg_sell: Decimal
+    realized_pnl: Decimal  # matched-qty realized (avg_sell - avg_buy) * matched
+    is_open: bool
+
+
+@dataclass(frozen=True)
+class BrokerPnLSummary:
+    per_position: list[BrokerPositionPnL]
+    total_realized: Decimal
+    open_count: int
+
+
+def _to_int(v: object) -> int:
+    try:
+        return int(Decimal(str(v)))
+    except (ValueError, ArithmeticError):
+        return 0
+
+
+def summarize_broker_positions(rows: list[dict]) -> BrokerPnLSummary:
+    """Realized day P&L per broker position via matched-qty (avg-price) matching, from the raw
+    Kotak position fields (flBuyQty/flSellQty filled quantities, buyAmt/sellAmt rupee values).
+
+    Realized on the matched (squared) quantity is exact. Any net_qty is still open — its
+    unrealized MTM needs a live LTP and is NOT included here."""
+    out: list[BrokerPositionPnL] = []
+    total = Decimal(0)
+    for r in rows:
+        bq = _to_int(r.get("flBuyQty"))
+        sq = _to_int(r.get("flSellQty"))
+        buy_val = _to_decimal(r.get("buyAmt"))
+        sell_val = _to_decimal(r.get("sellAmt"))
+        avg_buy, avg_sell = _avg(buy_val, bq), _avg(sell_val, sq)
+        matched = min(bq, sq)
+        realized = Decimal(matched) * (avg_sell - avg_buy)
+        total += realized
+        net = bq - sq
+        out.append(
+            BrokerPositionPnL(
+                symbol=str(r.get("trdSym", "")), net_qty=net, buy_qty=bq, sell_qty=sq,
+                avg_buy=avg_buy, avg_sell=avg_sell, realized_pnl=realized, is_open=net != 0,
+            )
+        )
+    out.sort(key=lambda p: p.realized_pnl)
+    return BrokerPnLSummary(
+        per_position=out,
+        total_realized=total,
+        open_count=sum(1 for p in out if p.is_open),
+    )
+
+
 def summarize_fills(trades: list[Trade]) -> FillSummary:
     """Aggregate fills into a per-symbol realized-P&L summary."""
     buy_qty: dict[str, int] = {}

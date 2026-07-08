@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from algo_trading.config.settings import Settings
 from algo_trading.dashboard.state_bridge import DashboardState
-from algo_trading.reporting import summarize_chain, summarize_fills
+from algo_trading.reporting import summarize_broker_positions, summarize_chain, summarize_fills
 
 
 class StateOut(BaseModel):
@@ -122,6 +122,35 @@ def orders_out(s: DashboardState) -> list[OrderOut]:
     return [OrderOut(order_id=o.order_id, symbol=o.trading_symbol, side=o.side, quantity=o.quantity,
                      filled_quantity=o.filled_quantity, price=o.price, order_type=o.order_type,
                      product=o.product, status=o.status, order_time=o.order_time) for o in s.orders]
+
+
+class BrokerPositionPnLOut(BaseModel):
+    symbol: str
+    net_qty: int
+    buy_qty: int
+    sell_qty: int
+    avg_buy: float
+    avg_sell: float
+    realized_pnl: float
+    is_open: bool
+
+
+class BrokerPnLOut(BaseModel):
+    total_realized: float  # realized on matched (squared) qty; excludes open-position MTM
+    open_count: int
+    per_position: list[BrokerPositionPnLOut]
+
+
+def broker_pnl_out(rows: list[dict]) -> BrokerPnLOut:
+    s = summarize_broker_positions(rows)
+    return BrokerPnLOut(
+        total_realized=float(s.total_realized), open_count=s.open_count,
+        per_position=[BrokerPositionPnLOut(
+            symbol=p.symbol, net_qty=p.net_qty, buy_qty=p.buy_qty, sell_qty=p.sell_qty,
+            avg_buy=float(p.avg_buy), avg_sell=float(p.avg_sell),
+            realized_pnl=float(p.realized_pnl), is_open=p.is_open,
+        ) for p in s.per_position],
+    )
 
 
 def chain_out(rows: list, underlying: str | None = None) -> ChainOut:

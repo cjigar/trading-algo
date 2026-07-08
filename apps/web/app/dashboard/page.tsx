@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { Banner, DataTable, Metric, Tabs } from "@/components/ui";
-import { api, clearToken, type Chain, type Order, type Position, type Trade } from "@/lib/api";
+import { api, clearToken, type BrokerPnL, type Chain, type Order, type Position, type Trade } from "@/lib/api";
 import { useStream } from "@/lib/useStream";
 
 const TABS = ["P&L", "Positions", "Orders", "Trades", "Option Chain", "Config"];
@@ -13,6 +13,7 @@ export default function Dashboard() {
   const [tab, setTab] = useState("P&L");
   const [positions, setPositions] = useState<Position[]>([]);
   const [brokerPositions, setBrokerPositions] = useState<Record<string, unknown>[]>([]);
+  const [brokerPnl, setBrokerPnl] = useState<BrokerPnL | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [config, setConfig] = useState<Record<string, unknown>>({});
@@ -22,12 +23,13 @@ export default function Dashboard() {
   const [chainView, setChainView] = useState<Chain | null>(null);
 
   const refresh = useCallback(async () => {
-    const [p, bp, o, t, c, ch] = await Promise.all([
-      api.positions(), api.brokerPositions(), api.orders(), api.trades(), api.config(),
-      api.chain(chainUnderlying ?? undefined),
+    const [p, bp, bpnl, o, t, c, ch] = await Promise.all([
+      api.positions(), api.brokerPositions(), api.brokerPnl(), api.orders(), api.trades(),
+      api.config(), api.chain(chainUnderlying ?? undefined),
     ]);
     setPositions(p);
     setBrokerPositions(bp);
+    setBrokerPnl(bpnl);
     setOrders(o);
     setTrades(t);
     setConfig(c);
@@ -83,14 +85,36 @@ export default function Dashboard() {
       <Tabs tabs={TABS} active={tab} onChange={setTab} />
 
       {tab === "P&L" && pnl && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Metric label="Realized P&L" value={pnl.total_realized.toLocaleString()} />
-            <Metric label="Algo state" value={state?.algo_state ?? "—"} />
-            <Metric label="Fills" value={pnl.trade_count} />
-            <Metric label="Buy / Sell value" value={`${pnl.total_buy_value.toLocaleString()} / ${pnl.total_sell_value.toLocaleString()}`} />
+        <div className="space-y-6">
+          {brokerPnl && (
+            <div className="space-y-2">
+              <h2 className="text-sm font-medium text-neutral-300">Broker account P&amp;L (live)</h2>
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+                <Metric
+                  label="Realized P&L (today)"
+                  value={<span className={brokerPnl.total_realized >= 0 ? "text-emerald-400" : "text-red-400"}>
+                    ₹{brokerPnl.total_realized.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  </span>}
+                />
+                <Metric label="Open positions" value={brokerPnl.open_count} />
+                <Metric label="Positions (total)" value={brokerPnl.per_position.length} />
+              </div>
+              <p className="text-xs text-neutral-500">
+                Realized on squared (matched) quantity, from the broker snapshot at last reconcile. Open positions&apos; unrealized MTM is not included (needs live LTP).
+              </p>
+              <BrokerPnLTable pnl={brokerPnl} />
+            </div>
+          )}
+          <div className="space-y-2">
+            <h2 className="text-sm font-medium text-neutral-300">Algo session P&amp;L (this session&apos;s fills)</h2>
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              <Metric label="Realized P&L" value={pnl.total_realized.toLocaleString()} />
+              <Metric label="Algo state" value={state?.algo_state ?? "—"} />
+              <Metric label="Fills" value={pnl.trade_count} />
+              <Metric label="Buy / Sell value" value={`${pnl.total_buy_value.toLocaleString()} / ${pnl.total_sell_value.toLocaleString()}`} />
+            </div>
+            <DataTable rows={pnl.per_symbol as unknown as Record<string, unknown>[]} />
           </div>
-          <DataTable rows={pnl.per_symbol as unknown as Record<string, unknown>[]} />
         </div>
       )}
       {tab === "Positions" && (
@@ -172,6 +196,44 @@ export default function Dashboard() {
         </div>
       )}
     </main>
+  );
+}
+
+// Per-position realized P&L, most negative first (matches the API ordering).
+function BrokerPnLTable({ pnl }: { pnl: BrokerPnL }) {
+  return (
+    <div className="overflow-x-auto rounded-md border border-neutral-800">
+      <table className="w-full text-right text-sm tabular-nums">
+        <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
+          <tr>
+            <th className="px-3 py-2 text-left">Symbol</th>
+            <th className="px-3 py-2">Net qty</th>
+            <th className="px-3 py-2">Avg buy</th>
+            <th className="px-3 py-2">Avg sell</th>
+            <th className="px-3 py-2">Realized P&amp;L</th>
+            <th className="px-3 py-2 text-center">State</th>
+          </tr>
+        </thead>
+        <tbody>
+          {pnl.per_position.map((p) => (
+            <tr key={p.symbol} className="border-t border-neutral-800/60">
+              <td className="px-3 py-1.5 text-left">{p.symbol}</td>
+              <td className="px-3 py-1.5">{p.net_qty}</td>
+              <td className="px-3 py-1.5">{p.avg_buy.toFixed(2)}</td>
+              <td className="px-3 py-1.5">{p.avg_sell.toFixed(2)}</td>
+              <td className={`px-3 py-1.5 ${p.realized_pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                ₹{p.realized_pnl.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </td>
+              <td className="px-3 py-1.5 text-center">
+                {p.is_open
+                  ? <span className="rounded bg-yellow-950 px-2 py-0.5 text-xs text-yellow-300">open</span>
+                  : <span className="text-xs text-neutral-500">squared</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

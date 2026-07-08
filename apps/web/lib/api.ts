@@ -1,7 +1,17 @@
 // Typed fetch helper against the FastAPI backend. Reads the auth token from a cookie and
 // attaches it as a Bearer header.
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
+// Resolve the API base at call time. An explicit NEXT_PUBLIC_API_BASE wins; otherwise call the
+// API on the SAME host the page was loaded from (port 8000) — so it works on localhost AND any
+// LAN IP without a rebuild when the machine's IP changes.
+export function apiBase(): string {
+  const env = process.env.NEXT_PUBLIC_API_BASE?.trim();
+  if (env) return env;
+  if (typeof window !== "undefined") {
+    return `${window.location.protocol}//${window.location.hostname}:8000`;
+  }
+  return "http://localhost:8000";
+}
 
 export function getToken(): string | null {
   if (typeof document === "undefined") return null;
@@ -20,7 +30,7 @@ export function clearToken() {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(`${apiBase()}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -38,7 +48,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  base: API_BASE,
+  get base() { return apiBase(); },
   login: (password: string) =>
     request<{ token: string }>("/api/login", { method: "POST", body: JSON.stringify({ password }) }),
   state: () => request<AlgoState>("/api/state"),
@@ -47,6 +57,7 @@ export const api = {
   orders: () => request<Order[]>("/api/orders"),
   trades: () => request<Trade[]>("/api/trades"),
   brokerPositions: () => request<Record<string, unknown>[]>("/api/broker-positions"),
+  brokerPnl: () => request<BrokerPnL>("/api/broker-pnl"),
   chain: (underlying?: string) =>
     request<Chain>(`/api/chain${underlying ? `?underlying=${encodeURIComponent(underlying)}` : ""}`),
   config: () => request<Record<string, unknown>>("/api/config"),
@@ -70,6 +81,11 @@ export type PnL = {
   total_realized: number; total_buy_value: number; total_sell_value: number;
   trade_count: number; matched_symbols: number; open_symbols: number; per_symbol: SymbolPnL[];
 };
+export type BrokerPositionPnL = {
+  symbol: string; net_qty: number; buy_qty: number; sell_qty: number;
+  avg_buy: number; avg_sell: number; realized_pnl: number; is_open: boolean;
+};
+export type BrokerPnL = { total_realized: number; open_count: number; per_position: BrokerPositionPnL[] };
 export type Position = {
   symbol: string; side: string; quantity: number; average_price: number; last_price: number;
   unrealized_pnl: number;
