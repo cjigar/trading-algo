@@ -40,6 +40,7 @@ def test_state(client, auth, repo):
     assert body["algo_state"] == "RUNNING"
     assert body["mode"] == "paper"
     assert body["live_armed"] is False
+    assert body["strategy"] == "oi_selling"  # committed default
 
 
 def test_pnl_and_trades(client, auth, repo):

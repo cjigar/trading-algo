@@ -2,15 +2,25 @@
 
 import type { ReactNode } from "react";
 
-export function Banner({ mode, liveArmed, algoState }: { mode: string; liveArmed: boolean; algoState: string }) {
+export function Banner(
+  { mode, liveArmed, algoState, strategy }:
+  { mode: string; liveArmed: boolean; algoState: string; strategy?: string },
+) {
   return (
     <div className="space-y-2">
       <div
-        className={`rounded-md px-4 py-2 font-medium ${
+        className={`flex flex-wrap items-center gap-x-2 rounded-md px-4 py-2 font-medium ${
           liveArmed ? "bg-red-950 text-red-300" : "bg-emerald-950 text-emerald-300"
         }`}
       >
-        {liveArmed ? "🔴 LIVE TRADING ARMED — real orders" : "🟢 PAPER MODE — no real orders"} · Mode: {mode.toUpperCase()}
+        <span>
+          {liveArmed ? "🔴 LIVE TRADING ARMED — real orders" : "🟢 PAPER MODE — no real orders"} · Mode: {mode.toUpperCase()}
+        </span>
+        {strategy && (
+          <span className="rounded bg-black/30 px-2 py-0.5 text-xs uppercase tracking-wide">
+            Strategy: {strategy}
+          </span>
+        )}
       </div>
       {algoState === "HALTED" && (
         <div className="rounded-md bg-yellow-950 px-4 py-2 text-yellow-300">

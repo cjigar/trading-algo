@@ -68,7 +68,7 @@ export default function Dashboard() {
         </button>
       </div>
 
-      {state && <Banner mode={state.mode} liveArmed={state.live_armed} algoState={state.algo_state} />}
+      {state && <Banner mode={state.mode} liveArmed={state.live_armed} algoState={state.algo_state} strategy={state.strategy} />}
 
       <div className="flex items-center gap-2">
         <button onClick={() => control("start")} className="rounded-md bg-emerald-700 px-3 py-2 text-sm hover:bg-emerald-600">▶ Start</button>

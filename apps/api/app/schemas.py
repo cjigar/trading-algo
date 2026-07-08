@@ -13,6 +13,7 @@ class StateOut(BaseModel):
     mode: str
     live_armed: bool
     algo_state: str
+    strategy: str  # active strategy: oi_selling | vwap_breakout
     active_underlying: str | None  # the OI underlying that trades today (SENSEX Wed/Thu, NIFTY else)
     oi_underlyings: list[str]
 
@@ -87,6 +88,7 @@ def state_out(settings: Settings, s: DashboardState) -> StateOut:
     active = settings.active_underlying_for_today()
     return StateOut(
         mode=settings.mode.value, live_armed=settings.live_armed, algo_state=s.algo_state.value,
+        strategy=settings.strategy,
         active_underlying=active.value if active else None,
         oi_underlyings=[u.value for u in settings.oi_underlyings],
     )
