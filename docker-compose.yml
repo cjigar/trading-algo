@@ -55,7 +55,9 @@ services:
       WEB_AUTH_SECRET: ${WEB_AUTH_SECRET:-dev-insecure-secret-change-me}
       WEB_CORS_ORIGINS: ${WEB_CORS_ORIGINS:-http://localhost:3000,http://localhost:3001}
     ports:
-      - "8000:8000"
+      # On a public server set BIND_ADDR=127.0.0.1: in .env so this binds to localhost only
+      # (Docker port publishing bypasses ufw). The proxy reaches api over the internal network.
+      - "${BIND_ADDR:-}8000:8000"
 
   # Next.js web app (replaces the Streamlit dashboard once at parity).
   web:
@@ -69,7 +71,7 @@ services:
     depends_on:
       - api
     ports:
-      - "3001:3000"
+      - "${BIND_ADDR:-}3001:3000"
 
 volumes:
   pgdata:

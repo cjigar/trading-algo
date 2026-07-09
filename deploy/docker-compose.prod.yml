@@ -1,0 +1,28 @@
+# Production overlay: adds a Caddy reverse proxy (TLS) in front of the api + web services.
+#
+# Use together with the base compose:
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d --build
+#
+# Requires in .env:  SITE_ADDRESS (domain or :443), BIND_ADDR=127.0.0.1:  and the usual secrets.
+# See deploy/DEPLOY.md for the full walkthrough.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+      - web
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:443}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

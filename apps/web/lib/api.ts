@@ -1,14 +1,21 @@
 // Typed fetch helper against the FastAPI backend. Reads the auth token from a cookie and
 // attaches it as a Bearer header.
 
-// Resolve the API base at call time. An explicit NEXT_PUBLIC_API_BASE wins; otherwise call the
-// API on the SAME host the page was loaded from (port 8000) — so it works on localhost AND any
-// LAN IP without a rebuild when the machine's IP changes.
+// Resolve the API base at call time:
+//  - An explicit NEXT_PUBLIC_API_BASE always wins.
+//  - Behind a reverse proxy on a standard port (prod: https, or port 80/443), the API is
+//    same-origin under /api — return the page origin (no :8000).
+//  - Local dev (web on :3001), call the API on the same host, port 8000.
+// This works on localhost, any LAN IP, and behind an HTTPS proxy without a rebuild.
 export function apiBase(): string {
   const env = process.env.NEXT_PUBLIC_API_BASE?.trim();
   if (env) return env;
   if (typeof window !== "undefined") {
-    return `${window.location.protocol}//${window.location.hostname}:8000`;
+    const { protocol, hostname, host, port } = window.location;
+    if (protocol === "https:" || port === "" || port === "80" || port === "443") {
+      return `${protocol}//${host}`;
+    }
+    return `${protocol}//${hostname}:8000`;
   }
   return "http://localhost:8000";
 }
