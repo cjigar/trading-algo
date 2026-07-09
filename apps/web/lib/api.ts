@@ -95,9 +95,12 @@ export type Order = {
   order_id: string; symbol: string; side: string; quantity: number; filled_quantity: number;
   price: string; order_type: string; product: string; status: string; order_time: string;
 };
-export type ChainStrike = { strike: number; ce_oi: number; ce_ltp: number; pe_oi: number; pe_ltp: number };
+export type ChainStrike = {
+  strike: number; ce_oi: number; ce_ltp: number; ce_chg_oi: number;
+  pe_oi: number; pe_ltp: number; pe_chg_oi: number; is_atm: boolean;
+};
 export type Chain = {
-  underlying: string | null; ce_oi_total: number; pe_oi_total: number;
+  underlying: string | null; atm: number | null; ce_oi_total: number; pe_oi_total: number;
   selected_side: string; per_strike: ChainStrike[];
 };
 export type StreamPayload = { state: AlgoState; pnl: PnL; chain: Chain };

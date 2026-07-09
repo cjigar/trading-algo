@@ -72,12 +72,16 @@ class ChainStrikeOut(BaseModel):
     strike: float
     ce_oi: int
     ce_ltp: float
+    ce_chg_oi: int
     pe_oi: int
     pe_ltp: float
+    pe_chg_oi: int
+    is_atm: bool
 
 
 class ChainOut(BaseModel):
     underlying: str | None
+    atm: float | None
     ce_oi_total: int
     pe_oi_total: int
     selected_side: str
@@ -153,9 +157,13 @@ def broker_pnl_out(rows: list[dict]) -> BrokerPnLOut:
     )
 
 
-def chain_out(rows: list, underlying: str | None = None) -> ChainOut:
-    cs = summarize_chain(rows)
-    return ChainOut(underlying=underlying, ce_oi_total=cs.ce_oi_total, pe_oi_total=cs.pe_oi_total,
-                    selected_side=cs.selected_side,
-                    per_strike=[ChainStrikeOut(strike=float(x.strike), ce_oi=x.ce_oi, ce_ltp=float(x.ce_ltp),
-                                               pe_oi=x.pe_oi, pe_ltp=float(x.pe_ltp)) for x in cs.per_strike])
+def chain_out(rows: list, underlying: str | None = None,
+              oi_baseline: dict[str, int] | None = None) -> ChainOut:
+    cs = summarize_chain(rows, oi_baseline)
+    return ChainOut(
+        underlying=underlying, atm=float(cs.atm) if cs.atm is not None else None,
+        ce_oi_total=cs.ce_oi_total, pe_oi_total=cs.pe_oi_total, selected_side=cs.selected_side,
+        per_strike=[ChainStrikeOut(
+            strike=float(x.strike), ce_oi=x.ce_oi, ce_ltp=float(x.ce_ltp), ce_chg_oi=x.ce_chg_oi,
+            pe_oi=x.pe_oi, pe_ltp=float(x.pe_ltp), pe_chg_oi=x.pe_chg_oi, is_atm=x.is_atm,
+        ) for x in cs.per_strike])

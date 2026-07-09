@@ -104,7 +104,7 @@ def get_chain(
     if not underlying:
         active = settings.active_underlying_for_today()
         underlying = active.value if active else None
-    return chain_out(bridge.chain(underlying), underlying)
+    return chain_out(bridge.chain(underlying), underlying, bridge.chain_oi_baseline(underlying))
 
 
 # --- Controls (enqueue commands; never the broker order path) -------------------------
@@ -161,7 +161,7 @@ def build_stream_payload() -> dict[str, Any]:
     return {
         "state": state_out(settings, state).model_dump(),
         "pnl": pnl_out(state).model_dump(),
-        "chain": chain_out(bridge.chain(u), u).model_dump(),
+        "chain": chain_out(bridge.chain(u), u, bridge.chain_oi_baseline(u)).model_dump(),
     }
 
 

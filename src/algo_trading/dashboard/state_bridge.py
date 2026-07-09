@@ -61,6 +61,10 @@ class StateBridge:
         """Latest option-chain snapshots, optionally filtered to one underlying."""
         return self._repo.latest_chain_state(underlying=underlying)
 
+    def chain_oi_baseline(self, underlying: str | None = None) -> dict[str, int]:
+        """Day-open OI per token (intraday change-in-OI baseline) for the chain view."""
+        return self._repo.chain_day_open_oi(underlying=underlying)
+
     def broker_positions(self) -> list[dict]:
         """The live broker positions captured at the last reconcile (raw broker dicts)."""
         return self._repo.latest_broker_positions()

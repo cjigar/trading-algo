@@ -168,6 +168,25 @@ class Repository:
 
     # -- Option-chain snapshots (append-only time series) ------------------------------
 
+    def chain_day_open_oi(
+        self, trading_day: date | None = None, underlying: str | None = None
+    ) -> dict[str, int]:
+        """Per instrument_token, the OI from that token's FIRST snapshot of the day (the intraday
+        change-in-OI baseline). Optionally filtered to one underlying."""
+        day = _today_str(trading_day)
+        with Session(self._engine) as session:
+            earliest_q = (
+                select(func.min(OptionChainSnapshotRow.id))
+                .where(OptionChainSnapshotRow.trading_day == day)
+                .group_by(col(OptionChainSnapshotRow.instrument_token))
+            )
+            if underlying is not None:
+                earliest_q = earliest_q.where(OptionChainSnapshotRow.underlying == underlying)
+            rows = session.exec(
+                select(OptionChainSnapshotRow).where(col(OptionChainSnapshotRow.id).in_(earliest_q))
+            )
+            return {r.instrument_token: (r.oi or 0) for r in rows}
+
     def replace_broker_positions(self, positions: list[dict], trading_day: date | None = None) -> int:
         """Replace the stored broker-position snapshot with the current set (raw broker dicts).
         Positions are point-in-time, so we clear and re-insert rather than append."""

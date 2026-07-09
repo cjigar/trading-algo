@@ -53,6 +53,14 @@ def test_pnl_and_trades(client, auth, repo):
 
 
 def test_chain(client, auth, repo):
+    # day-open baseline snapshot (first of the day per token)
+    repo.write_chain_snapshots([
+        {"underlying": "NIFTY", "strike": "23000", "option_type": "CE", "instrument_token": "c1",
+         "oi": 4000, "ltp": "100", "volume": 10},
+        {"underlying": "NIFTY", "strike": "23000", "option_type": "PE", "instrument_token": "p1",
+         "oi": 800, "ltp": "90", "volume": 10},
+    ])
+    # later snapshot: OI built up during the day
     repo.write_chain_snapshots([
         {"underlying": "NIFTY", "strike": "23000", "option_type": "CE", "instrument_token": "c1",
          "oi": 5000, "ltp": "100", "volume": 10},
@@ -64,7 +72,11 @@ def test_chain(client, auth, repo):
     assert chain["underlying"] == "NIFTY"
     assert chain["ce_oi_total"] == 5000 and chain["pe_oi_total"] == 1000
     assert chain["selected_side"] == "CE"
+    assert chain["atm"] == 23000.0
     assert len(chain["per_strike"]) == 1
+    row = chain["per_strike"][0]
+    assert row["is_atm"] is True
+    assert row["ce_chg_oi"] == 1000 and row["pe_chg_oi"] == 200  # 5000-4000, 1000-800
 
 
 def test_control_enqueues_command(client, auth, repo):

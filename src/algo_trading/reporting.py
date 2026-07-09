@@ -9,7 +9,7 @@ Any unmatched quantity is an open position (net_qty), whose P&L is unrealized an
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 
 from algo_trading.domain.enums import Side
@@ -50,6 +50,9 @@ class ChainStrike:
     ce_ltp: Decimal
     pe_oi: int
     pe_ltp: Decimal
+    ce_chg_oi: int = 0  # intraday change vs the day's first snapshot
+    pe_chg_oi: int = 0
+    is_atm: bool = False
 
 
 @dataclass(frozen=True)
@@ -58,12 +61,30 @@ class ChainSummary:
     ce_oi_total: int
     pe_oi_total: int
     selected_side: str  # "CE" | "PE" | "—"
+    atm: Decimal | None = None
 
 
-def summarize_chain(rows: list) -> ChainSummary:
-    """Pivot latest option-chain snapshot rows (with .strike/.option_type/.oi/.ltp) into a
-    per-strike CE/PE view plus the aggregate CE-vs-PE OI and the side the OI strategy would sell."""
-    by_strike: dict[Decimal, dict[str, tuple[int, Decimal]]] = {}
+def _resolve_atm(per_strike: list[ChainStrike]) -> Decimal | None:
+    """ATM strike from chain data alone: the strike where CE and PE premiums are closest
+    (put-call parity puts ATM there). Falls back to the middle strike of the window when LTPs
+    aren't available (e.g. market closed)."""
+    priced = [s for s in per_strike if s.ce_ltp > 0 and s.pe_ltp > 0]
+    if priced:
+        return min(priced, key=lambda s: abs(s.ce_ltp - s.pe_ltp)).strike
+    if per_strike:
+        return per_strike[len(per_strike) // 2].strike
+    return None
+
+
+def summarize_chain(rows: list, oi_baseline: dict[str, int] | None = None) -> ChainSummary:
+    """Pivot latest option-chain snapshot rows (with .strike/.option_type/.oi/.ltp/.instrument_token)
+    into a per-strike CE/PE view: OI, intraday change-in-OI (vs the day-open baseline), the
+    aggregate CE-vs-PE OI, the side the OI strategy would sell, and the ATM strike.
+
+    ``oi_baseline`` maps instrument_token -> day-open OI; change is 0 when no baseline is given."""
+    baseline = oi_baseline or {}
+    # value tuple: (oi, ltp, chg_oi)
+    by_strike: dict[Decimal, dict[str, tuple[int, Decimal, int]]] = {}
     for r in rows:
         try:
             strike = Decimal(str(r.strike))
@@ -71,19 +92,28 @@ def summarize_chain(rows: list) -> ChainSummary:
             continue
         oi = int(r.oi) if r.oi is not None else 0
         ltp = _to_decimal(r.ltp)
-        by_strike.setdefault(strike, {})[str(r.option_type).upper()] = (oi, ltp)
+        token = str(getattr(r, "instrument_token", ""))
+        chg = oi - baseline.get(token, oi)  # 0 when this token has no day-open baseline
+        by_strike.setdefault(strike, {})[str(r.option_type).upper()] = (oi, ltp, chg)
 
     per_strike: list[ChainStrike] = []
     ce_total = pe_total = 0
     for strike in sorted(by_strike):
-        ce = by_strike[strike].get("CE", (0, Decimal(0)))
-        pe = by_strike[strike].get("PE", (0, Decimal(0)))
+        ce = by_strike[strike].get("CE", (0, Decimal(0), 0))
+        pe = by_strike[strike].get("PE", (0, Decimal(0), 0))
         ce_total += ce[0]
         pe_total += pe[0]
-        per_strike.append(ChainStrike(strike, ce[0], ce[1], pe[0], pe[1]))
+        per_strike.append(ChainStrike(
+            strike=strike, ce_oi=ce[0], ce_ltp=ce[1], ce_chg_oi=ce[2],
+            pe_oi=pe[0], pe_ltp=pe[1], pe_chg_oi=pe[2],
+        ))
+
+    atm = _resolve_atm(per_strike)
+    if atm is not None:
+        per_strike = [replace(s, is_atm=(s.strike == atm)) for s in per_strike]
 
     selected = "CE" if ce_total > pe_total else "PE" if pe_total > ce_total else "—"
-    return ChainSummary(per_strike, ce_total, pe_total, selected)
+    return ChainSummary(per_strike, ce_total, pe_total, selected, atm)
 
 
 def _to_decimal(v: object) -> Decimal:

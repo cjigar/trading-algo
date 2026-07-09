@@ -161,7 +161,8 @@ export default function Dashboard() {
           </div>
           {chainView ? (
             <>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <Metric label="ATM strike" value={chainView.atm ? chainView.atm.toLocaleString() : "—"} />
                 <Metric label="Total CE OI" value={chainView.ce_oi_total.toLocaleString()} />
                 <Metric label="Total PE OI" value={chainView.pe_oi_total.toLocaleString()} />
                 <Metric label="Higher-OI side" value={chainView.selected_side} />
@@ -238,7 +239,8 @@ function BrokerPnLTable({ pnl }: { pnl: BrokerPnL }) {
 }
 
 // Classic option-chain layout: calls on the left, strike in the middle, puts on the right.
-// The higher-OI cell in each row is highlighted so the OI skew is visible at a glance.
+// Each side shows OI, intraday change-in-OI, and LTP; the OI cell carries a depth bar and the
+// ATM strike's row is highlighted.
 function OptionChainTable({ chain }: { chain: Chain }) {
   const rows = [...chain.per_strike].sort((a, b) => a.strike - b.strike);
   const maxOi = Math.max(1, ...rows.flatMap((r) => [r.ce_oi, r.pe_oi]));
@@ -247,25 +249,44 @@ function OptionChainTable({ chain }: { chain: Chain }) {
       side === "ce" ? "rgba(16,185,129,0.18)" : "rgba(239,68,68,0.18)"
     } ${(oi / maxOi) * 100}%, transparent 0)`,
   });
+  const chg = (v: number) => (
+    <span className={v > 0 ? "text-emerald-400" : v < 0 ? "text-red-400" : "text-neutral-500"}>
+      {v > 0 ? "+" : ""}{v.toLocaleString()}
+    </span>
+  );
   return (
     <div className="overflow-x-auto rounded-md border border-neutral-800">
       <table className="w-full text-right text-sm tabular-nums">
         <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
           <tr>
-            <th className="px-3 py-2">CE OI</th>
-            <th className="px-3 py-2">CE LTP</th>
+            <th className="px-3 py-2" colSpan={3}>Calls (CE)</th>
             <th className="px-3 py-2 text-center">Strike</th>
-            <th className="px-3 py-2 text-left">PE LTP</th>
-            <th className="px-3 py-2 text-left">PE OI</th>
+            <th className="px-3 py-2 text-left" colSpan={3}>Puts (PE)</th>
+          </tr>
+          <tr className="text-[10px]">
+            <th className="px-3 py-1">OI</th>
+            <th className="px-3 py-1">Chg OI</th>
+            <th className="px-3 py-1">LTP</th>
+            <th className="px-3 py-1 text-center">{chain.atm ? `ATM ${chain.atm.toLocaleString()}` : ""}</th>
+            <th className="px-3 py-1 text-left">LTP</th>
+            <th className="px-3 py-1 text-left">Chg OI</th>
+            <th className="px-3 py-1 text-left">OI</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.strike} className="border-t border-neutral-800/60">
+            <tr
+              key={r.strike}
+              className={`border-t border-neutral-800/60 ${r.is_atm ? "bg-blue-950/60" : ""}`}
+            >
               <td className="px-3 py-1.5" style={bar(r.ce_oi, "ce")}>{r.ce_oi.toLocaleString()}</td>
+              <td className="px-3 py-1.5">{chg(r.ce_chg_oi)}</td>
               <td className="px-3 py-1.5 text-emerald-400">{r.ce_ltp.toFixed(2)}</td>
-              <td className="px-3 py-1.5 text-center font-semibold text-neutral-200">{r.strike.toLocaleString()}</td>
+              <td className={`px-3 py-1.5 text-center font-semibold ${r.is_atm ? "text-blue-300" : "text-neutral-200"}`}>
+                {r.strike.toLocaleString()}{r.is_atm ? " •" : ""}
+              </td>
               <td className="px-3 py-1.5 text-left text-red-400">{r.pe_ltp.toFixed(2)}</td>
+              <td className="px-3 py-1.5 text-left">{chg(r.pe_chg_oi)}</td>
               <td className="px-3 py-1.5 text-left" style={bar(r.pe_oi, "pe")}>{r.pe_oi.toLocaleString()}</td>
             </tr>
           ))}
