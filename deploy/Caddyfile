@@ -1,18 +1,21 @@
 # Caddy reverse proxy for the trading-algo dashboard.
 #
-# SITE_ADDRESS (set in .env) controls TLS:
-#   - A domain, e.g. algo.example.com   -> Caddy auto-provisions a real Let's Encrypt cert.
-#   - :443                              -> no domain; pair with `tls internal` below for a
-#                                          self-signed cert (browser will warn once; fine for a
-#                                          single-user IP-restricted dashboard).
+# TLS depends on SITE_ADDRESS (set in .env):
+#   - DOMAIN (e.g. algo.example.com): remove the `tls` line below — Caddy auto-provisions a real
+#     Let's Encrypt cert. Clients send SNI, so on-demand/ACME certs work.
+#   - IP ONLY (SITE_ADDRESS=:443): clients do NOT send SNI for a bare IP, so Caddy's on-demand
+#     internal issuer can't pick a cert and the handshake fails. Use an explicit self-signed cert
+#     with the IP in its SAN (the `tls` line below) — see deploy/DEPLOY.md for how to generate it.
+#     The browser warns once ("proceed"); fine for a single-user IP-restricted dashboard.
 #
-# Access is expected to be firewalled to your own IP(s) (see deploy/DEPLOY.md).
+# Access must be firewalled to your own IP via the DOCKER-USER chain — Docker-published ports
+# BYPASS ufw, so a `ufw allow 443` rule does NOT restrict this. See deploy/DEPLOY.md.
 
 {$SITE_ADDRESS} {
 	encode gzip
 
-	# If SITE_ADDRESS is :443 (IP only, no domain), uncomment the next line for a self-signed cert:
-	# tls internal
+	# IP-only self-signed cert (generated per deploy/DEPLOY.md). For a DOMAIN, delete this line.
+	tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
 
 	# API + health checks -> FastAPI backend (same origin, so the browser needs no CORS).
 	@api path /api/* /health

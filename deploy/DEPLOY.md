@@ -48,23 +48,64 @@ ALGO_CONFIRM_LIVE=YES
 INSTALL_BROKER=1                     # bake the Kotak SDK into the algo image
 ```
 
-> No domain? Set `SITE_ADDRESS=:443` and uncomment `tls internal` in `deploy/Caddyfile` for a
-> self-signed cert (one browser warning; fine for a single-user dashboard). A domain is cleaner —
-> point an A record at `SERVER_IP` and set `SITE_ADDRESS` to it.
+### IP only (no domain) — generate a self-signed cert
+
+Clients don't send SNI for a bare IP, so Caddy needs an explicit cert (with the IP in its SAN):
+
+```bash
+cd ~/trading-algo && mkdir -p deploy/certs
+openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+  -keyout deploy/certs/key.pem -out deploy/certs/cert.pem \
+  -subj "/CN=SERVER_IP" -addext "subjectAltName=IP:SERVER_IP"
+```
+
+Set `SITE_ADDRESS=:443` in `.env`. The `deploy/Caddyfile` already points at these cert files.
+(With a domain instead: set `SITE_ADDRESS=algo.example.com`, delete the `tls` line in the
+Caddyfile, and Caddy auto-provisions a real Let's Encrypt cert.)
 
 ## 5. Firewall — restrict the dashboard to your IP
 
+Host-level with ufw (SSH stays open; key-only auth):
+
 ```bash
+sudo ufw allow OpenSSH
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
-sudo ufw allow OpenSSH
-sudo ufw allow from YOUR_IP to any port 443 proto tcp   # dashboard, only from your IP
-sudo ufw allow from YOUR_IP to any port 80  proto tcp   # ACME http-01 / redirect (domain TLS)
-sudo ufw enable
+sudo ufw --force enable
 ```
 
-`BIND_ADDR=127.0.0.1:` keeps ports 8000/3001 on localhost only, so they are never reachable
-from the internet even though Docker's iptables rules would otherwise bypass ufw.
+**Important:** Docker-published ports (Caddy's 80/443) are inserted by Docker into the `nat`
+table and **BYPASS ufw** — `ufw allow ... port 443` does NOT restrict them. Restrict them in the
+`DOCKER-USER` chain instead, and persist it with a systemd unit that runs after Docker:
+
+```bash
+sudo tee /etc/docker-user-firewall.sh >/dev/null <<'EOF'
+#!/bin/bash
+ALLOW=YOUR_IP
+for r in "-j DROP" "-s 127.0.0.1 -j RETURN" "-s $ALLOW -j RETURN"; do
+  while iptables -D DOCKER-USER -p tcp -m multiport --dports 80,443 $r 2>/dev/null; do :; done
+done
+iptables -I DOCKER-USER -p tcp -m multiport --dports 80,443 -j DROP
+iptables -I DOCKER-USER -p tcp -m multiport --dports 80,443 -s 127.0.0.1 -j RETURN
+iptables -I DOCKER-USER -p tcp -m multiport --dports 80,443 -s $ALLOW -j RETURN
+EOF
+sudo chmod +x /etc/docker-user-firewall.sh
+sudo tee /etc/systemd/system/docker-user-firewall.service >/dev/null <<'EOF'
+[Unit]
+After=docker.service
+Requires=docker.service
+[Service]
+Type=oneshot
+ExecStart=/etc/docker-user-firewall.sh
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl enable --now docker-user-firewall.service
+```
+
+`BIND_ADDR=127.0.0.1:` also keeps ports 8000/3001 on localhost only, so they are never reachable
+from the internet. Your public IP is dynamic — if it changes, update `ALLOW` in the script (and
+re-run it) and the dashboard will be reachable again; SSH stays open so you can always get back in.
 
 ## 6. Build and start
 

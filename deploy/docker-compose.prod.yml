@@ -20,6 +20,7 @@ services:
       SITE_ADDRESS: ${SITE_ADDRESS:-:443}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/certs:/etc/caddy/certs:ro   # IP-only self-signed cert (see DEPLOY.md); unused for a domain
       - caddy_data:/data
       - caddy_config:/config
 
