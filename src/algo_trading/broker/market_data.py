@@ -83,6 +83,7 @@ class FeedHandler:
         self._last_tick_at: float | None = None
         self._lock = threading.RLock()
         self._max_backoff = 30.0
+        self._reconnecting = False
 
     def bind(self, neo_client: Any) -> None:
         self._neo = neo_client
@@ -143,18 +144,41 @@ class FeedHandler:
     # -- Reconnect / heartbeat ---------------------------------------------------------
 
     def reconnect(self, max_attempts: int = 6) -> bool:
-        """Reconnect with exponential backoff and resubscribe. Returns True on success."""
-        backoff = 1.0
-        for attempt in range(1, max_attempts + 1):
-            try:
-                self._resubscribe_all()
-                log.info("quote_ws_reconnected", attempt=attempt)
-                return True
-            except Exception as exc:  # noqa: BLE001
-                log.warning("quote_ws_reconnect_failed", attempt=attempt, error=str(exc))
-                self._sleep(min(backoff, self._max_backoff))
-                backoff *= 2
-        return False
+        """Reconnect with exponential backoff and resubscribe. Returns True on success.
+
+        Guarded against re-entry. On an abrupt connection loss the SDK's ``subscribe()``
+        stands up a fresh websocket; if that attempt fails it fires ``on_error`` *from
+        inside this call*, which lands back here. Without the guard each level fans out
+        into ``max_attempts`` more levels (6, 36, 216, ...), and since every attempt leaks
+        the socket and thread of the connection it just failed to establish, the process
+        exhausts its FD limit within minutes. Observed in production: 14,306 threads and
+        1024/1024 FDs, which wedges the feed permanently while the process still looks
+        healthy to Docker.
+        """
+        with self._lock:
+            if self._reconnecting:
+                # A reconnect is already walking its attempts; this call arrived via an
+                # on_error fired by that reconnect's own subscribe(). Let the outer loop
+                # own the retries.
+                log.debug("quote_ws_reconnect_reentered")
+                return False
+            self._reconnecting = True
+
+        try:
+            backoff = 1.0
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    self._resubscribe_all()
+                    log.info("quote_ws_reconnected", attempt=attempt)
+                    return True
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("quote_ws_reconnect_failed", attempt=attempt, error=str(exc))
+                    self._sleep(min(backoff, self._max_backoff))
+                    backoff *= 2
+            return False
+        finally:
+            with self._lock:
+                self._reconnecting = False
 
     def is_stale(self, now: float | None = None) -> bool:
         """True if no tick has arrived within the configured stale-feed window."""

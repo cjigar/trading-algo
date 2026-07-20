@@ -7,6 +7,7 @@ subscribe_to_orderfeed().
 
 from __future__ import annotations
 
+import contextlib
 from datetime import datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -206,3 +207,74 @@ def test_dispatch_order_envelope_routes_to_order_feed():
     neo.on_message({"type": "order_feed", "data": [
         {"tag": "alg1", "ordSt": "complete", "fldQty": "75", "qty": "75", "nOrdNo": "B1"}]})
     assert len(events) == 1 and events[0].state is OrderState.FILLED
+
+
+# -- Reconnect storm (regression) -------------------------------------------------------
+
+
+class DeadSocketNeo:
+    """Mimics the SDK after an *abrupt* connection loss.
+
+    On a dead socket the SDK's ``subscribe()`` tries to stand up a fresh websocket. That
+    attempt fails, fires ``on_error`` (re-entering our handler), then raises. This is the
+    shape that produced the 14k-thread / FD-exhaustion storm on the live server.
+    """
+
+    def __init__(self, cap: int = 500):
+        self.on_message = self.on_error = self.on_close = self.on_open = None
+        self.subscribe_calls = 0
+        self.max_nesting = 0
+        self._depth = 0
+        self._cap = cap
+
+    def subscribe(self, instrument_tokens, isIndex=False, isDepth=False):
+        self.subscribe_calls += 1
+        if self.subscribe_calls > self._cap:
+            raise RuntimeError("runaway guard tripped")  # keeps a buggy impl from hanging
+        self._depth += 1
+        self.max_nesting = max(self.max_nesting, self._depth)
+        try:
+            if self.on_error is not None:
+                self.on_error("Connection to remote host was lost.")
+        finally:
+            self._depth -= 1
+        raise RuntimeError("can't start new thread")
+
+    def subscribe_to_orderfeed(self):
+        pass
+
+
+def _wire_dead_socket():
+    neo = DeadSocketNeo()
+    coord = LiveFeedCoordinator(
+        _settings(), neo, on_tick=lambda t: None, on_order_event=lambda e: None
+    )
+    coord._feed._sleep = lambda *_: None  # no real backoff sleeps in tests
+    coord._feed._subscriptions = {
+        "256265": {"instrument_token": "256265", "exchange_segment": "nse_cm"}
+    }
+    neo.on_error = coord._on_error  # what start() installs
+    return neo, coord
+
+
+def test_abrupt_ws_loss_does_not_reenter_reconnect():
+    """A reconnect triggered from on_error must not recurse when the retry itself errors."""
+    neo, coord = _wire_dead_socket()
+
+    with contextlib.suppress(RuntimeError):  # runaway guard; a correct impl never trips it
+        coord._on_error("Connection to remote host was lost.")
+
+    assert neo.max_nesting == 1, f"reconnect re-entered itself (depth {neo.max_nesting})"
+
+
+def test_abrupt_ws_loss_bounds_total_subscribe_attempts():
+    """One connection loss must cost a bounded number of connection attempts, not 6**depth."""
+    neo, coord = _wire_dead_socket()
+
+    with contextlib.suppress(RuntimeError):
+        coord._on_error("Connection to remote host was lost.")
+
+    assert neo.subscribe_calls <= 6, (
+        f"one drop caused {neo.subscribe_calls} connection attempts; "
+        "each leaks a socket + thread on the real SDK"
+    )
