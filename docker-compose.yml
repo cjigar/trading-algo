@@ -65,7 +65,9 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
       args:
-        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8000}
+        # No colon in the default: `:-` would substitute for an *empty* value too, re-pinning
+        # the bundle to localhost:8000 and defeating the same-origin resolution in lib/api.ts.
+        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE-}
     image: algo-web:latest
     restart: unless-stopped
     depends_on:
