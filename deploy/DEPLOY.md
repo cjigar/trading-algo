@@ -107,8 +107,14 @@ sudo tee /etc/systemd/system/docker-user-firewall.service >/dev/null <<'EOF'
 [Unit]
 After=docker.service
 Requires=docker.service
+# PartOf makes systemd re-run this unit whenever docker restarts. Without it, `After`/`Requires`
+# only order the units at boot — a later `systemctl restart docker` re-inserts DOCKER-USER at the
+# top of FORWARD, pushing the bridge ACCEPT rules below it, and container outbound silently dies.
+PartOf=docker.service
 [Service]
 Type=oneshot
+# Keeps the oneshot "active" after it exits, so PartOf restart propagation actually fires.
+RemainAfterExit=yes
 ExecStart=/etc/docker-user-firewall.sh
 [Install]
 WantedBy=multi-user.target
@@ -118,6 +124,22 @@ sudo systemctl enable --now docker-user-firewall.service
 
 > If you enabled ufw before adding the FORWARD rules and containers went offline, run
 > `sudo systemctl restart docker && sudo systemctl start docker-user-firewall` to restore.
+
+**Rule order is what matters.** The bridge ACCEPTs must sit *above* the `DOCKER-USER` jump —
+`DOCKER-USER` is in the `FORWARD` chain, which carries both directions, so its 80/443 `DROP`
+also kills containers' *outbound* HTTPS if it is hit first. Verify with:
+
+```bash
+sudo iptables -L FORWARD -n -v --line-numbers | head -6   # ESTABLISHED, docker0, br+ ... then DOCKER-USER
+sudo docker exec trading-algo-api-1 python -c \
+  "import socket; socket.create_connection(('mis.kotaksecurities.com',443),8); print('outbound OK')"
+```
+
+If `DOCKER-USER` is at position 1, the rules went stale — `sudo systemctl start docker-user-firewall`
+restores them. Symptom when stale: the `algo` container crash-loops on startup with
+`[Errno 101] Network is unreachable` reaching `mis.kotaksecurities.com`, while `api`/`web`/`caddy`
+stay up (they need no outbound), so the dashboard looks healthy and only trading is dead. Check
+`docker inspect -f '{{.RestartCount}}' trading-algo-algo-1` — a large count is the tell.
 
 `BIND_ADDR=127.0.0.1:` also keeps ports 8000/3001 on localhost only, so they are never reachable
 from the internet. Your public IP is dynamic — if it changes, update `ALLOW` in the script (and
