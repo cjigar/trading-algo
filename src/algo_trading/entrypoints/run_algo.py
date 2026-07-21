@@ -86,6 +86,12 @@ def main() -> None:
                 orch.process_control_commands()
             except Exception:  # noqa: BLE001
                 log.exception("control_command_processing_failed")
+            try:
+                # Reconnects a feed that went quiet — including a subscription the SDK dropped
+                # because it was issued before the websocket finished connecting.
+                orch.recover_stale_feed()
+            except Exception:  # noqa: BLE001
+                log.exception("feed_recovery_failed")
             elapsed += 1
             if settings.strategy == "oi_selling" and elapsed >= eval_every:
                 try:

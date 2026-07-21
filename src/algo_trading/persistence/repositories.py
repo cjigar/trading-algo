@@ -1,7 +1,9 @@
-"""Repository layer over the SQLite schema.
+"""Repository layer over the PostgreSQL/TimescaleDB schema.
 
 Provides append-only writes for events/trades/P&L/audit, an idempotent-upsert for order
 state (each transition also appends an immutable event), and persisted algo-state get/set.
+Reads over the snapshot hypertable use PostgreSQL ``DISTINCT ON`` for per-token latest/earliest
+rows; rolling OI anchors additionally read the ``chain_oi_1m`` continuous aggregate.
 """
 
 from __future__ import annotations
@@ -10,11 +12,12 @@ import json
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import Engine, delete, func
+from sqlalchemy import Engine, delete, text
 from sqlmodel import Session, col, select
 
 from algo_trading.domain.enums import AlgoState, ExchangeSegment, OptionType, Side, Underlying
 from algo_trading.domain.models import Instrument, OrderEvent, OrderRequest, Trade
+from algo_trading.persistence.bootstrap import CHAIN_AGG_VIEW, CHAIN_TABLE, agg_bucket_seconds
 from algo_trading.persistence.db import (
     AlgoStateRow,
     AuditEventRow,
@@ -27,6 +30,42 @@ from algo_trading.persistence.db import (
     PnlSnapshotRow,
     TradeRow,
 )
+
+# Point-in-time OI anchor per instrument token: the continuous aggregate answers everything up to
+# the last bucket that closed at or before :target, the raw hypertable covers the remaining tail,
+# and the outer DISTINCT ON picks whichever is newer per token. A token with no snapshot before
+# :target appears in neither branch and is therefore absent from the result.
+#
+# Both branches consider only rows that actually carry an OI: the broker sends OI in a token's
+# first full packet and NULL in the LTP-only ticks that follow, so "the newest row" is almost
+# never "the newest OI reading".
+_ANCHOR_SQL = f"""
+WITH boundary AS (
+    SELECT time_bucket(CAST(:bucket AS interval), CAST(:target AS timestamp)) AS b
+),
+raw_tail AS (
+    SELECT DISTINCT ON (s.instrument_token) s.instrument_token, s.oi, s.timestamp AS at
+    FROM {CHAIN_TABLE} s, boundary
+    WHERE s.trading_day = :day
+      AND s.oi IS NOT NULL
+      AND s.timestamp >= boundary.b
+      AND s.timestamp <= CAST(:target AS timestamp)
+      AND (CAST(:underlying AS text) IS NULL OR s.underlying = :underlying)
+    ORDER BY s.instrument_token, s.timestamp DESC
+),
+agg AS (
+    SELECT DISTINCT ON (a.instrument_token) a.instrument_token, a.last_oi AS oi, a.oi_at AS at
+    FROM {CHAIN_AGG_VIEW} a, boundary
+    WHERE a.trading_day = :day
+      AND a.last_oi IS NOT NULL
+      AND a.bucket < boundary.b
+      AND (CAST(:underlying AS text) IS NULL OR a.underlying = :underlying)
+    ORDER BY a.instrument_token, a.bucket DESC
+)
+SELECT DISTINCT ON (instrument_token) instrument_token, oi
+FROM (SELECT * FROM raw_tail UNION ALL SELECT * FROM agg) u
+ORDER BY instrument_token, at DESC
+"""
 
 
 def _today_str(trading_day: date | None = None) -> str:
@@ -79,6 +118,7 @@ class Repository:
 
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
+        self._bucket_seconds: int | None = None
 
     # -- Orders (idempotent state + append-only events) --------------------------------
 
@@ -171,19 +211,15 @@ class Repository:
     def chain_day_open_oi(
         self, trading_day: date | None = None, underlying: str | None = None
     ) -> dict[str, int]:
-        """Per instrument_token, the OI from that token's FIRST snapshot of the day (the intraday
-        change-in-OI baseline). Optionally filtered to one underlying."""
+        """Per instrument_token, the OI from that token's first snapshot of the day that carries
+        one (the intraday change-in-OI baseline). Optionally filtered to one underlying.
+
+        LTP-only ticks have a NULL OI and are skipped — otherwise the baseline would be zero for
+        any token whose first packet of the day happened to omit OI."""
         day = _today_str(trading_day)
         with Session(self._engine) as session:
-            earliest_q = (
-                select(func.min(OptionChainSnapshotRow.id))
-                .where(OptionChainSnapshotRow.trading_day == day)
-                .group_by(col(OptionChainSnapshotRow.instrument_token))
-            )
-            if underlying is not None:
-                earliest_q = earliest_q.where(OptionChainSnapshotRow.underlying == underlying)
             rows = session.exec(
-                select(OptionChainSnapshotRow).where(col(OptionChainSnapshotRow.id).in_(earliest_q))
+                self._distinct_per_token(day, underlying, newest=False, with_oi_only=True)
             )
             return {r.instrument_token: (r.oi or 0) for r in rows}
 
@@ -238,21 +274,48 @@ class Repository:
         self, trading_day: date | None = None, underlying: str | None = None
     ) -> list[OptionChainSnapshotRow]:
         """Latest snapshot per instrument token for the day (the current chain state), optionally
-        filtered to one underlying (e.g. only SENSEX)."""
+        filtered to one underlying (e.g. only SENSEX).
+
+        LTP comes from the genuinely newest row, but OI is carried over from that token's newest
+        row that *has* an OI: the broker sends OI once per token in its full packet and NULL in
+        every LTP-only tick after it, so the newest row's ``oi`` is almost always NULL.
+        """
         day = _today_str(trading_day)
         with Session(self._engine) as session:
-            latest_q = (
-                select(func.max(OptionChainSnapshotRow.id))
-                .where(OptionChainSnapshotRow.trading_day == day)
-                .group_by(col(OptionChainSnapshotRow.instrument_token))
-            )
-            if underlying is not None:
-                latest_q = latest_q.where(OptionChainSnapshotRow.underlying == underlying)
-            return list(
-                session.exec(
-                    select(OptionChainSnapshotRow).where(col(OptionChainSnapshotRow.id).in_(latest_q))
+            rows = list(session.exec(self._distinct_per_token(day, underlying, newest=True)))
+            known_oi = {
+                r.instrument_token: r.oi
+                for r in session.exec(
+                    self._distinct_per_token(day, underlying, newest=True, with_oi_only=True)
                 )
-            )
+            }
+        for row in rows:
+            if row.oi is None:
+                row.oi = known_oi.get(row.instrument_token)
+        return rows
+
+    @staticmethod
+    def _distinct_per_token(
+        day: str, underlying: str | None, *, newest: bool, with_oi_only: bool = False
+    ):
+        """``DISTINCT ON (instrument_token)`` over the day's snapshots, picking each token's
+        newest (or, when ``newest`` is false, oldest) row. ``id`` breaks ties between rows
+        written with the same timestamp. ``with_oi_only`` restricts the scan to rows that carry
+        an OI reading."""
+        ts = col(OptionChainSnapshotRow.timestamp)
+        rid = col(OptionChainSnapshotRow.id)
+        order = (ts.desc(), rid.desc()) if newest else (ts.asc(), rid.asc())
+        stmt = (
+            select(OptionChainSnapshotRow)
+            .where(OptionChainSnapshotRow.trading_day == day)
+            .distinct(col(OptionChainSnapshotRow.instrument_token))
+            .order_by(col(OptionChainSnapshotRow.instrument_token), *order)
+        )
+        if underlying is not None:
+            stmt = stmt.where(OptionChainSnapshotRow.underlying == underlying)
+        if with_oi_only:
+            stmt = stmt.where(col(OptionChainSnapshotRow.oi).is_not(None))
+        return stmt
 
     def oi_at_or_before(
         self,
@@ -265,21 +328,24 @@ class Repository:
         only if at least one snapshot precedes ``target``; tokens with no prior snapshot are
         OMITTED (callers treat absence as "no anchor" / unavailable, distinct from a zero OI).
 
-        Backed by the composite index (instrument_token, trading_day, timestamp)."""
+        Served by the ``chain_oi_1m`` continuous aggregate for every bucket that closed at or
+        before ``target``, plus a raw-hypertable read of the tail since that last closed bucket
+        (at most one bucket wide). Splitting on the bucket boundary is what keeps the aggregate
+        from looking *ahead* of ``target`` — a bucket's ``last_oi`` is its value at bucket end,
+        so only fully-elapsed buckets may be used.
+        """
         day = _today_str(trading_day)
-        with Session(self._engine) as session:
-            anchor_q = (
-                select(func.max(OptionChainSnapshotRow.id))
-                .where(OptionChainSnapshotRow.trading_day == day)
-                .where(col(OptionChainSnapshotRow.timestamp) <= target)
-                .group_by(col(OptionChainSnapshotRow.instrument_token))
-            )
-            if underlying is not None:
-                anchor_q = anchor_q.where(OptionChainSnapshotRow.underlying == underlying)
-            rows = session.exec(
-                select(OptionChainSnapshotRow).where(col(OptionChainSnapshotRow.id).in_(anchor_q))
-            )
-            return {r.instrument_token: (r.oi or 0) for r in rows}
+        bucket = f"{self._agg_bucket_seconds()} seconds"
+        params = {"day": day, "target": target, "underlying": underlying, "bucket": bucket}
+        with self._engine.connect() as conn:
+            rows = conn.execute(text(_ANCHOR_SQL), params).all()
+        return {token: (oi or 0) for token, oi in rows}
+
+    def _agg_bucket_seconds(self) -> int:
+        """Bucket width of the continuous aggregate, read once per repository."""
+        if self._bucket_seconds is None:
+            self._bucket_seconds = agg_bucket_seconds(self._engine)
+        return self._bucket_seconds
 
     def oi_anchors_for_windows(
         self,
@@ -297,16 +363,6 @@ class Repository:
             target = now - timedelta(minutes=minutes)
             out[minutes] = self.oi_at_or_before(target, trading_day=trading_day, underlying=underlying)
         return out
-
-    def prune_snapshots(self, older_than_days: int, today: date | None = None) -> int:
-        """Delete option-chain snapshots older than ``older_than_days``. Returns rows deleted."""
-        cutoff = ((today or date.today()) - timedelta(days=older_than_days)).isoformat()
-        with Session(self._engine) as session:
-            result = session.exec(
-                delete(OptionChainSnapshotRow).where(col(OptionChainSnapshotRow.trading_day) < cutoff)
-            )
-            session.commit()
-            return result.rowcount or 0
 
     def record_broker_order(self, fields: dict, trading_day: date | None = None) -> bool:
         """Upsert an order from the broker's order report, keyed by order_id. Returns True if a

@@ -1,7 +1,7 @@
 """Bridge between the dashboard and the trading loop.
 
 The dashboard runs as a SEPARATE process and must never hold a broker session or place orders.
-This bridge only reads state from the shared SQLite database and writes control commands
+This bridge only reads state from the shared PostgreSQL database and writes control commands
 (start/stop/flatten) that the orchestrator consumes. Open positions and P&L are reconstructed by
 replaying the day's trades through the same PositionTracker the loop uses.
 """
@@ -36,8 +36,7 @@ class DashboardState:
 
 class StateBridge:
     def __init__(self, settings: Settings) -> None:
-        # A fresh engine over the SAME database the loop writes to (separate process).
-        # With Postgres both processes share the server; with SQLite they share the file.
+        # A fresh engine over the SAME PostgreSQL database the loop writes to (separate process).
         self._repo = Repository(create_engine_from_settings(settings))
 
     def read_state(self) -> DashboardState:

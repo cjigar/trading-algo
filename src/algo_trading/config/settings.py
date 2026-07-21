@@ -19,6 +19,13 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from algo_trading.domain.enums import ProductType, StrikeSelection, TradingMode, Underlying
 
 
+def is_postgres_url(url: str) -> bool:
+    """True for SQLAlchemy URLs pointing at PostgreSQL (``postgresql://``, ``postgresql+psycopg://``,
+    and the legacy ``postgres://`` alias)."""
+    scheme = url.split("://", 1)[0].split("+", 1)[0].strip().lower()
+    return scheme in {"postgresql", "postgres"}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="ALGO_",
@@ -37,12 +44,15 @@ class Settings(BaseSettings):
     kotak_neo_fin_key: str = "neotradeapi"
 
     # --- Persistence ---
-    # Full SQLAlchemy URL (e.g. postgresql+psycopg://user:pass@db:5432/algo). When empty,
-    # a local SQLite database at db_path is used. Set ALGO_DATABASE_URL in containers.
+    # Full SQLAlchemy URL — PostgreSQL only, e.g.
+    # postgresql+psycopg://user:pass@db:5432/algo. Required: there is no local/file fallback.
     database_url: str = ""
-    db_path: str = "data/algo.db"
     # Retries when connecting to the DB on startup (lets Postgres finish booting in compose).
     db_connect_retries: int = 10
+    # Time-series (TimescaleDB) tuning for the option-chain snapshot hypertable.
+    chain_chunk_interval_days: int = 1  # one chunk per trading day
+    chain_compress_after_days: int = 2  # compress chunks older than this
+    chain_agg_bucket_seconds: int = 60  # continuous-aggregate bucket for OI-trend anchors
 
     # --- Instruments ---
     # NoDecode: skip pydantic-settings' JSON parsing so the comma-split validator below handles
@@ -83,7 +93,7 @@ class Settings(BaseSettings):
     oi_trend_windows: Annotated[list[int], NoDecode] = Field(default_factory=lambda: [1, 3, 5, 15])
     # Absolute OI change (contracts) below which a window is classified Flat rather than Up/Down.
     oi_trend_flat_threshold: int = 0
-    chain_retention_days: int = 30  # prune option-chain snapshots older than this
+    chain_retention_days: int = 30  # retention policy: drop chain-snapshot chunks older than this
     margin_buffer: Decimal = Decimal("0")  # fraction of extra margin headroom required
     # Weekdays each underlying may take entries (Mon=0 … Sun=6).
     allowed_weekdays: Annotated[list[int], NoDecode] = Field(default_factory=lambda: [4, 0, 1])  # NIFTY: Fri,Mon,Tue
@@ -109,6 +119,9 @@ class Settings(BaseSettings):
     squareoff_time: time = time(15, 15)
     premarket_login_time: time = time(8, 45)
     stale_feed_seconds: int = 15
+    # Minimum gap between stale-feed reconnect attempts, so a quiet market or a broker-side
+    # outage can never turn the watchdog into a reconnect loop.
+    feed_recover_cooldown_seconds: int = 30
 
     # --- Dashboard ---
     dashboard_refresh_seconds: int = 30  # auto-refresh interval for the Streamlit dashboard
@@ -118,6 +131,19 @@ class Settings(BaseSettings):
     # Exchange freeze quantity: orders larger than this are split into multiple legs.
     # PLACEHOLDER — confirm the current per-underlying freeze qty with the exchange/operator.
     freeze_quantity: int = 1800
+
+    @field_validator("database_url")
+    @classmethod
+    def _require_postgres_url(cls, v: str) -> str:
+        """Reject non-PostgreSQL URLs at construction. An empty value is allowed here (some
+        entrypoints never touch the DB); :meth:`resolved_database_url` requires it to be set."""
+        url = v.strip()
+        if url and not is_postgres_url(url):
+            raise ValueError(
+                f"ALGO_DATABASE_URL must be a PostgreSQL URL; got {url!r}. "
+                "SQLite and other backends are not supported."
+            )
+        return v
 
     @field_validator("underlyings", "oi_underlyings", mode="before")
     @classmethod
@@ -202,14 +228,24 @@ class Settings(BaseSettings):
         return override if override > 0 else scrip_lot_size
 
     def resolved_database_url(self) -> str:
-        """Return the configured database URL, or a local SQLite URL derived from db_path."""
-        if self.database_url.strip():
-            return self.database_url.strip()
-        return f"sqlite:///{self.db_path}"
+        """Return the configured PostgreSQL URL.
 
-    @property
-    def uses_postgres(self) -> bool:
-        return "postgres" in self.resolved_database_url()
+        PostgreSQL is the only supported backend — there is no file/SQLite fallback — so a
+        missing or non-Postgres URL is a configuration error raised here rather than a
+        silently-degraded engine later.
+        """
+        url = self.database_url.strip()
+        if not url:
+            raise ValueError(
+                "ALGO_DATABASE_URL is required (PostgreSQL only), e.g. "
+                "postgresql+psycopg://algo:algo@localhost:5432/algo"
+            )
+        if not is_postgres_url(url):
+            raise ValueError(
+                f"ALGO_DATABASE_URL must be a PostgreSQL URL; got {url!r}. "
+                "SQLite and other backends are not supported."
+            )
+        return url
 
     @property
     def is_live(self) -> bool:

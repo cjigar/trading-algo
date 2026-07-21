@@ -1,4 +1,4 @@
-.PHONY: install install-broker lint type test check run clean \
+.PHONY: install install-broker lint type test check run clean db-up db-down \
         docker-build docker-up docker-down docker-logs docker-ps
 
 install:
@@ -15,6 +15,14 @@ fmt:
 
 type:
 	mypy
+
+# TimescaleDB for local runs and the test suite (localhost:55432 by default). PostgreSQL is the
+# only supported backend — `make test` needs this running.
+db-up:
+	docker compose up -d db
+
+db-down:
+	docker compose stop db
 
 test:
 	pytest

@@ -75,6 +75,7 @@ def main() -> None:
     try:
         while not stop["flag"]:  # pragma: no cover - long-running loop
             orch.flush_snapshots()  # persist buffered chain snapshots
+            orch.recover_stale_feed()  # a subscription lost to the connect race self-heals here
             time.sleep(2.0)
     finally:
         orch.flush_snapshots()

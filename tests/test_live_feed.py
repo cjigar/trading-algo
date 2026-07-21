@@ -278,3 +278,82 @@ def test_abrupt_ws_loss_bounds_total_subscribe_attempts():
         f"one drop caused {neo.subscribe_calls} connection attempts; "
         "each leaks a socket + thread on the real SDK"
     )
+
+
+# -- Stale-feed watchdog ---------------------------------------------------------------
+#
+# A subscription issued before the SDK's websocket finishes connecting is silently dropped:
+# the feed sits open and empty until something tears the socket down. These cover the
+# watchdog that reconnects instead of waiting for that teardown.
+
+
+class _FakeCoordinator:
+    def __init__(self, stale: bool, reconnect_ok: bool = True):
+        self.stale = stale
+        self.reconnect_ok = reconnect_ok
+        self.reconnects = 0
+
+    def is_stale(self) -> bool:
+        return self.stale
+
+    def reconnect(self) -> bool:
+        self.reconnects += 1
+        return self.reconnect_ok
+
+
+def _orch_with_coordinator(engine, coordinator, **overrides):
+    settings = _settings(mode=TradingMode.PAPER, **overrides)
+    orch = Orchestrator(
+        settings, scrip_master=ScripMaster([]), broker=PaperBroker(),
+        strategy=VwapBreakoutStrategy(settings), repo=Repository(engine),
+    )
+    orch._coordinator = coordinator
+    return orch
+
+
+def test_stale_feed_triggers_reconnect(engine):
+    coord = _FakeCoordinator(stale=True)
+    orch = _orch_with_coordinator(engine, coord)
+    assert orch.recover_stale_feed(now=100.0) is True
+    assert coord.reconnects == 1
+
+
+def test_healthy_feed_is_left_alone(engine):
+    coord = _FakeCoordinator(stale=False)
+    orch = _orch_with_coordinator(engine, coord)
+    assert orch.recover_stale_feed(now=100.0) is False
+    assert coord.reconnects == 0
+
+
+def test_no_coordinator_is_a_noop(engine):
+    orch = _orch_with_coordinator(engine, None)
+    assert orch.recover_stale_feed(now=100.0) is False
+
+
+def test_reconnects_are_rate_limited_by_cooldown(engine):
+    coord = _FakeCoordinator(stale=True)
+    orch = _orch_with_coordinator(engine, coord, feed_recover_cooldown_seconds=30)
+    orch.recover_stale_feed(now=100.0)
+    orch.recover_stale_feed(now=110.0)  # inside the cooldown
+    orch.recover_stale_feed(now=125.0)  # still inside
+    assert coord.reconnects == 1
+    orch.recover_stale_feed(now=131.0)  # cooldown elapsed
+    assert coord.reconnects == 2
+
+
+def test_failed_reconnect_still_starts_the_cooldown(engine):
+    """A broker-side outage must not spin: a failed attempt waits like a successful one."""
+    coord = _FakeCoordinator(stale=True, reconnect_ok=False)
+    orch = _orch_with_coordinator(engine, coord, feed_recover_cooldown_seconds=30)
+    assert orch.recover_stale_feed(now=100.0) is False
+    orch.recover_stale_feed(now=105.0)
+    assert coord.reconnects == 1
+
+
+def test_coordinator_reconnect_resubscribes_order_feed():
+    neo = FakeNeo()
+    coord = LiveFeedCoordinator(_settings(), neo, on_tick=lambda t: None, on_order_event=lambda e: None)
+    coord.start()
+    neo.orderfeed = False  # simulate the socket going away
+    assert coord.reconnect() is True
+    assert neo.orderfeed is True  # order feed re-subscribed alongside the quote feed

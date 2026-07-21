@@ -9,6 +9,7 @@ live requires explicit confirmation before real orders are armed.
 from __future__ import annotations
 
 import threading
+import time
 from datetime import UTC
 from decimal import Decimal
 from typing import Any
@@ -62,6 +63,7 @@ class Orchestrator:
         self._secrets = secrets
         self._neo_client = neo_client  # authenticated Kotak client (live mode)
         self._coordinator: Any = None  # LiveFeedCoordinator, set by attach_live_feeds()
+        self._last_feed_recovery: float | None = None  # monotonic ts of the last stale-feed reconnect
         self._bus = EventBus()
         self._ltp: dict[str, Decimal] = {}  # instrument_token -> last ltp
         self._underlying_token: dict[str, Underlying] = {}  # index token -> underlying
@@ -208,6 +210,28 @@ class Orchestrator:
     def feed_is_stale(self) -> bool:
         """True if the live quote feed has gone stale (used as a halt condition)."""
         return self._coordinator is not None and self._coordinator.is_stale()
+
+    def recover_stale_feed(self, now: float | None = None) -> bool:
+        """Reconnect the quote feed when it has gone quiet. Returns True if a reconnect was made.
+
+        Call this from the process's main loop. It exists because a subscription issued before
+        the websocket finishes connecting is silently dropped by the SDK — the feed then sits
+        open and empty until the socket is torn down, which cost ~3 minutes of a live session in
+        production. ``stale_feed_seconds`` decides "quiet for too long"; attempts are spaced by
+        ``feed_recover_cooldown_seconds`` so a genuinely idle market (or a broker-side outage)
+        cannot turn this into a reconnect loop.
+        """
+        if self._coordinator is None or not self._coordinator.is_stale():
+            return False
+        now = now if now is not None else time.monotonic()
+        cooldown = self._settings.feed_recover_cooldown_seconds
+        if self._last_feed_recovery is not None and (now - self._last_feed_recovery) < cooldown:
+            return False
+        self._last_feed_recovery = now
+        log.warning("feed_stale_reconnecting", stale_seconds=self._settings.stale_feed_seconds)
+        ok = self._coordinator.reconnect()
+        log.info("feed_reconnect_result", ok=ok)
+        return ok
 
     def flush_snapshots(self) -> int:
         """Flush any buffered option-chain snapshots to the DB (OI mode). Returns rows written."""

@@ -1,8 +1,11 @@
-"""Option-chain snapshot persistence: write, latest state, pruning, batched writer."""
+"""Option-chain snapshot persistence: write, latest state, OI anchors, batched writer.
+
+Retention is a TimescaleDB policy now (see tests/test_timescale_schema.py), not a repository call.
+"""
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 
 from algo_trading.persistence.repositories import Repository
 from algo_trading.persistence.snapshot_writer import SnapshotWriter
@@ -28,15 +31,36 @@ def test_write_and_latest_state(repo: Repository):
     assert by_token["T2"].option_type == "PE"
 
 
-def test_prune_snapshots(repo: Repository):
-    old_day = date(2025, 1, 1)
-    repo.write_chain_snapshots([_snap("T1", "23000")], trading_day=old_day)
-    repo.write_chain_snapshots([_snap("T2", "23050")], trading_day=date(2025, 1, 15))
-    # prune anything older than 5 days relative to 2025-01-15
-    deleted = repo.prune_snapshots(older_than_days=5, today=date(2025, 1, 15))
-    assert deleted == 1
-    remaining = {r.instrument_token for r in repo.latest_chain_state(trading_day=date(2025, 1, 15))}
-    assert remaining == {"T2"}
+# The broker sends OI in a token's first full packet and NULL in the LTP-only ticks that follow,
+# so "newest row" and "newest OI reading" are different rows for nearly every token.
+
+
+def test_latest_state_carries_last_known_oi_over_ltp_only_ticks(repo: Repository):
+    repo.write_chain_snapshots([_snap("T1", "23000", oi=1000, ltp="100", ts=datetime(2025, 1, 15, 10, 0))])
+    repo.write_chain_snapshots([_snap("T1", "23000", oi=None, ltp="105", ts=datetime(2025, 1, 15, 10, 1))])
+    repo.write_chain_snapshots([_snap("T1", "23000", oi=None, ltp="110", ts=datetime(2025, 1, 15, 10, 2))])
+    row = repo.latest_chain_state()[0]
+    assert row.ltp == "110"  # LTP from the genuinely newest row
+    assert row.oi == 1000    # OI carried over from the last row that had one
+
+
+def test_latest_state_oi_stays_none_when_never_reported(repo: Repository):
+    repo.write_chain_snapshots([_snap("T1", "23000", oi=None, ltp="100", ts=datetime(2025, 1, 15, 10, 0))])
+    assert repo.latest_chain_state()[0].oi is None
+
+
+def test_day_open_oi_skips_ltp_only_ticks(repo: Repository):
+    repo.write_chain_snapshots([_snap("T1", "23000", oi=None, ltp="100", ts=datetime(2025, 1, 15, 9, 15))])
+    repo.write_chain_snapshots([_snap("T1", "23000", oi=900, ltp="101", ts=datetime(2025, 1, 15, 9, 16))])
+    repo.write_chain_snapshots([_snap("T1", "23000", oi=1200, ltp="102", ts=datetime(2025, 1, 15, 10, 0))])
+    assert repo.chain_day_open_oi() == {"T1": 900}  # first row WITH an OI, not the NULL one
+
+
+def test_oi_anchor_skips_ltp_only_ticks(repo: Repository):
+    repo.write_chain_snapshots([_snap("T1", "23000", oi=1000, ts=datetime(2025, 1, 15, 10, 0))])
+    repo.write_chain_snapshots([_snap("T1", "23000", oi=None, ts=datetime(2025, 1, 15, 10, 2))])
+    # The newest row before 10:03 has no OI; the anchor must be the 10:00 reading, not 0.
+    assert repo.oi_at_or_before(datetime(2025, 1, 15, 10, 3)) == {"T1": 1000}
 
 
 def test_oi_at_or_before_selects_latest_prior_row(repo: Repository):

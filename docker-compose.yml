@@ -1,6 +1,8 @@
 services:
   db:
-    image: postgres:16-alpine
+    # TimescaleDB (a superset of stock PG16): hypertables, compression, retention policies and
+    # continuous aggregates for the option-chain snapshot series. Same major version, same volume.
+    image: timescale/timescaledb-ha:pg16
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-algo}
@@ -13,9 +15,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    # Not published by default — only the app services need it. Uncomment to inspect locally.
-    # ports:
-    #   - "5432:5432"
+    ports:
+      # Bound to localhost by default (never exposed publicly — Docker port publishing bypasses
+      # ufw). Local dev and the test suite connect here; 55432 avoids clashing with a
+      # system Postgres on 5432. Override with DB_PORT / DB_BIND_ADDR.
+      - "${DB_BIND_ADDR:-127.0.0.1:}${DB_PORT:-55432}:5432"
 
   algo:
     build:
@@ -30,7 +34,7 @@ services:
     env_file:
       - .env
     environment:
-      # Overrides ALGO_DB_PATH from .env — the loop uses Postgres in containers.
+      # Overrides ALGO_DATABASE_URL from .env — in containers the loop talks to the db service.
       ALGO_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-algo}:${POSTGRES_PASSWORD:-algo}@db:5432/${POSTGRES_DB:-algo}
     volumes:
       - ./scrip_cache:/app/scrip_cache

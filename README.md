@@ -6,14 +6,14 @@ A Python service that trades a **VWAP / price-action breakout** strategy on **NI
 
 ## Architecture
 
-The trading loop runs as its **own process**; the web app (`apps/api` + `apps/web`) runs **separately** and communicates with the loop through a shared database — **SQLite** locally, **PostgreSQL** in Docker (it never holds the broker session or places orders directly).
+The trading loop runs as its **own process**; the web app (`apps/api` + `apps/web`) runs **separately** and communicates with the loop through a shared **PostgreSQL/TimescaleDB** database — the same backend locally and in Docker (the web app never holds the broker session or places orders directly).
 
 ```
 market-data feed ─┐
                   ├─▶ candle builder ─▶ strategy ─▶ risk ─▶ execution ─▶ position/P&L tracker
 order feed ───────┘                                                          │
                                                                             ▼
-                                                                     SQLite (audit + control)
+                                                        PostgreSQL/TimescaleDB (audit + control)
                                                                             ▲
                                                               FastAPI (apps/api) ← Next.js (apps/web)
 ```
@@ -24,7 +24,7 @@ Package layout (`src/algo_trading/`):
 |---|---|
 | `config/` | Typed settings + secret loading |
 | `domain/` | Enums and immutable data models |
-| `persistence/` | DB schema + repositories (append-only audit; SQLite or Postgres) |
+| `persistence/` | DB schema + repositories (append-only audit; PostgreSQL/TimescaleDB hypertables) |
 | `broker/` | Kotak client wrapper, auth/session, market-data & order websockets, live-feed coordinator |
 | `instruments/` | Scrip-master ingestion + weekly-option resolver |
 | `strategy/` | Candle builder, indicators (VWAP/ATR), pluggable strategies |
@@ -44,9 +44,12 @@ python3 -m venv .venv && source .venv/bin/activate
 make install            # core + dev deps (paper mode + tests, no broker SDK)
 make install-broker     # additionally installs the Kotak Neo SDK from its pinned tag
 cp .env.example .env    # fill in credentials + parameters
+make db-up              # TimescaleDB on 127.0.0.1:55432 — required for running AND for tests
 ```
 
 The Kotak Neo SDK is **not on PyPI**; `make install-broker` pulls it from the pinned GitHub tag. Paper mode and the full test suite run without it.
+
+The test suite talks to a real TimescaleDB: it creates a throwaway `algo_test_<pid>` database on the server from `ALGO_TEST_DATABASE_URL` (default `postgresql+psycopg://algo:algo@localhost:55432/algo`) and drops it afterwards. Without a reachable server the suite fails with a pointer to `make db-up` — it never falls back to another backend.
 
 ## Running
 
@@ -58,7 +61,7 @@ For the monitoring/control UI, see [Web app](#web-app-nextjs--fastapi-monorepo).
 
 ## Docker (Postgres + loop + web app)
 
-The containerized stack runs via Docker Compose — **`db`** (PostgreSQL), **`algo`** (trading loop), **`api`** (FastAPI), and **`web`** (Next.js) — all sharing Postgres.
+The containerized stack runs via Docker Compose — **`db`** (TimescaleDB), **`algo`** (trading loop), **`api`** (FastAPI), and **`web`** (Next.js) — all sharing the same PostgreSQL database.
 
 ```bash
 cp .env.example .env       # fill Kotak creds + params; POSTGRES_* have working defaults
@@ -68,9 +71,18 @@ make docker-logs           # tail algo
 make docker-down           # stop
 ```
 
-- The database is selected by `ALGO_DATABASE_URL`: Compose sets it to the Postgres service automatically; locally it's unset, so the app falls back to SQLite (`ALGO_DB_PATH`). The same code and schema run on both.
+- **PostgreSQL is required** — `ALGO_DATABASE_URL` must be set to a `postgresql+psycopg://…` URL and there is no file/SQLite fallback. Compose sets it to the `db` service automatically; for local runs start the same container with `make db-up` (published on `127.0.0.1:55432`) and use the URL in `.env.example`.
+- The `db` service runs **TimescaleDB** (`timescale/timescaledb-ha:pg16`). At startup the app creates the extension, converts `option_chain_snapshots` and `pnl_snapshots` to hypertables, and applies the compression, retention, and continuous-aggregate policies — all idempotent, so restarts are no-ops. Tuning lives in `ALGO_CHAIN_*` settings.
 - To bake the Kotak SDK into the image (for live mode), build with `INSTALL_BROKER=1` (env var or `--build-arg`).
 - Postgres data persists in the `pgdata` volume; `make docker-down` keeps it (`docker compose down -v` wipes it).
+
+**Upgrading an existing (stock PostgreSQL) deployment to TimescaleDB** — do this **outside market hours**:
+
+1. Snapshot the volume first: `docker compose stop algo api && docker run --rm -v trading-algo_pgdata:/v -v "$PWD:/b" alpine tar czf /b/pgdata-backup.tgz /v`.
+2. `docker compose pull db && docker compose up -d db` (same PG16 major version, same volume), wait for `healthy`.
+3. `docker compose up -d algo api` — first startup creates the extension, fixes the snapshot tables' primary keys, converts them to hypertables (`migrate_data`, so existing rows are kept), and installs the policies.
+4. Verify: `docker compose exec db psql -U algo -d algo -c "select hypertable_name from timescaledb_information.hypertables"` and `... -c "select proc_name, config from timescaledb_information.jobs"`.
+5. Rollback: hypertable-converted tables are **not** readable by stock PostgreSQL — restore the snapshot from step 1 and revert the image tag.
 
 ## Option-chain capture (read-only, no orders)
 
@@ -135,6 +147,7 @@ overrides file the loop reads on reload.
 ## Quality
 
 ```bash
+make db-up       # once: the suite needs PostgreSQL/TimescaleDB
 make check       # ruff + mypy + pytest
 ```
 

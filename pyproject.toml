@@ -17,6 +17,8 @@ dependencies = [
     "pydantic-settings>=2.2",
     "pandas>=2.2",
     "sqlmodel>=0.0.16",
+    # PostgreSQL is the only supported backend, so the driver is required, not an extra.
+    "psycopg[binary]>=3.1",
     "structlog>=24.1",
     "apscheduler>=3.10",
     "tenacity>=8.2",
@@ -27,10 +29,6 @@ dependencies = [
 broker = [
     # Convenience extra: `pip install -e ".[broker]"`
     "neo_api_client @ git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.2",
-]
-postgres = [
-    # PostgreSQL driver (used in the Docker deployment; SQLite needs nothing extra).
-    "psycopg[binary]>=3.1",
 ]
 dev = [
     "pytest>=8.0",

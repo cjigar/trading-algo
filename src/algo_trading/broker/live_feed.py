@@ -105,6 +105,15 @@ class LiveFeedCoordinator:
     def is_stale(self) -> bool:
         return self._feed.is_stale()
 
+    def reconnect(self) -> bool:
+        """Re-establish the quote subscription (and the order feed with it). Returns True on
+        success. Shares the reconnect path used by the socket's error/close handlers, including
+        its re-entry guard."""
+        ok = self._feed.reconnect()
+        if ok:
+            self._order_feed.resubscribe()
+        return ok
+
     # -- Dispatch ----------------------------------------------------------------------
 
     def _dispatch(self, message: Any) -> None:
