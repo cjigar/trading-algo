@@ -78,6 +78,7 @@ make docker-down           # stop
 
 **Upgrading an existing (stock PostgreSQL) deployment to TimescaleDB** — do this **outside market hours**:
 
+0. Note: the compose `db` service passes `-c shared_preload_libraries=timescaledb`, because the image only writes that setting into `postgresql.conf` when it initialises a *new* cluster — a cluster adopted from stock postgres keeps its own config and `CREATE EXTENSION` fails without it.
 1. Snapshot the volume first: `docker compose stop algo api && docker run --rm -v trading-algo_pgdata:/v -v "$PWD:/b" alpine tar czf /b/pgdata-backup.tgz /v`.
 2. `docker compose pull db && docker compose up -d db` (same PG16 major version, same volume), wait for `healthy`.
 3. `docker compose up -d algo api` — first startup creates the extension, fixes the snapshot tables' primary keys, converts them to hypertables (`migrate_data`, so existing rows are kept), and installs the policies.

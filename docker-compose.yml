@@ -8,6 +8,10 @@ services:
     # the existing one. This image keeps PGDATA=/var/lib/postgresql/data, matching both stock
     # postgres and the pgdata volume below.
     image: timescale/timescaledb:latest-pg16
+    # The image writes shared_preload_libraries into postgresql.conf only when it *initialises*
+    # a cluster. A cluster adopted from stock postgres keeps its own config, and CREATE EXTENSION
+    # then fails. Passing it on the command line covers both cases.
+    command: ["postgres", "-c", "shared_preload_libraries=timescaledb"]
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-algo}
