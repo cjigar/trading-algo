@@ -12,7 +12,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import Engine
+from sqlalchemy import Engine, Index
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Field, SQLModel, create_engine
 
@@ -140,6 +140,17 @@ class OptionChainSnapshotRow(SQLModel, table=True):
     """Append-only time series of option-chain quotes (OI/LTP/volume) for the ATM window."""
 
     __tablename__ = "option_chain_snapshots"
+    # Composite index for the point-in-time-per-token anchor lookup used by rolling-window OI
+    # trends: filter by token within a trading_day, order by timestamp to find the latest row
+    # at-or-before a target time. Kept alongside the single-column indexes below.
+    __table_args__ = (
+        Index(
+            "ix_chain_snap_token_day_ts",
+            "instrument_token",
+            "trading_day",
+            "timestamp",
+        ),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     trading_day: str = Field(index=True)

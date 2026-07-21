@@ -66,11 +66,12 @@ def test_empty():
 
 
 class _Row:
-    def __init__(self, strike, ot, oi, ltp):
+    def __init__(self, strike, ot, oi, ltp, token=""):
         self.strike = strike
         self.option_type = ot
         self.oi = oi
         self.ltp = ltp
+        self.instrument_token = token
 
 
 def test_summarize_chain_pivots_and_selects_side():
@@ -97,6 +98,73 @@ def test_summarize_chain_empty():
     from algo_trading.reporting import summarize_chain
     s = summarize_chain([])
     assert s.per_strike == [] and s.ce_oi_total == 0 and s.selected_side == "—"
+
+
+# -- OI trend classification (pure function) -------------------------------------------
+
+
+def test_oi_trend_up_down_flat_na():
+    from algo_trading.reporting import TREND_DOWN, TREND_FLAT, TREND_NA, TREND_UP, oi_trend
+    assert oi_trend(1500, 1000).direction == TREND_UP
+    assert oi_trend(1500, 1000).delta == 500
+    assert oi_trend(800, 1000).direction == TREND_DOWN
+    assert oi_trend(800, 1000).delta == -200
+    assert oi_trend(1000, 1000).direction == TREND_FLAT
+    # no anchor -> na, delta None (NOT flat-by-default)
+    assert oi_trend(1500, None).direction == TREND_NA
+    assert oi_trend(1500, None).delta is None
+
+
+def test_oi_trend_flat_threshold():
+    from algo_trading.reporting import TREND_FLAT, TREND_UP, oi_trend
+    # within threshold -> flat; beyond -> directional
+    assert oi_trend(1050, 1000, flat_threshold=50).direction == TREND_FLAT
+    assert oi_trend(1051, 1000, flat_threshold=50).direction == TREND_UP
+
+
+def test_summarize_chain_computes_per_window_trends():
+    from algo_trading.reporting import TREND_DOWN, TREND_NA, TREND_UP, summarize_chain
+    rows = [
+        _Row("23000", "CE", 5000, "120", token="CE1"),
+        _Row("23000", "PE", 1000, "80", token="PE1"),
+    ]
+    anchors = {
+        1: {"CE1": 4000, "PE1": 1200},  # CE up 1000, PE down 200
+        3: {"CE1": 4500},               # PE1 missing -> na for PE in 3m
+        5: {},                          # both missing -> na
+    }
+    s = summarize_chain(rows, oi_anchors=anchors, trend_windows=[1, 3, 5])
+    strike = s.per_strike[0]
+    assert strike.ce_oi_trends[1].direction == TREND_UP
+    assert strike.ce_oi_trends[1].delta == 1000
+    assert strike.pe_oi_trends[1].direction == TREND_DOWN
+    assert strike.ce_oi_trends[3].direction == TREND_UP
+    assert strike.pe_oi_trends[3].direction == TREND_NA   # anchor missing
+    assert strike.ce_oi_trends[5].direction == TREND_NA
+    # all configured windows present for both sides
+    assert set(strike.ce_oi_trends) == {1, 3, 5}
+    assert set(strike.pe_oi_trends) == {1, 3, 5}
+
+
+def test_summarize_chain_preserves_day_open_chg_oi_with_trends():
+    from algo_trading.reporting import summarize_chain
+    rows = [_Row("23000", "CE", 5000, "120", token="CE1")]
+    s = summarize_chain(
+        rows,
+        oi_baseline={"CE1": 4000},          # day-open baseline -> chg 1000
+        oi_anchors={1: {"CE1": 4800}},      # 1m trend -> up 200
+        trend_windows=[1],
+    )
+    strike = s.per_strike[0]
+    assert strike.ce_chg_oi == 1000        # unchanged day-open behavior
+    assert strike.ce_oi_trends[1].delta == 200
+
+
+def test_summarize_chain_without_anchors_has_empty_trends():
+    from algo_trading.reporting import summarize_chain
+    rows = [_Row("23000", "CE", 5000, "120", token="CE1")]
+    s = summarize_chain(rows)  # no anchors/windows -> backward compatible
+    assert s.per_strike[0].ce_oi_trends == {}
 
 def test_broker_positions_realized_and_open():
     # A squared position (buy 200 @183.31, sell 200 @189.585) and a fully-open short.

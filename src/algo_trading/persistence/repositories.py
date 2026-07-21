@@ -254,6 +254,50 @@ class Repository:
                 )
             )
 
+    def oi_at_or_before(
+        self,
+        target: datetime,
+        trading_day: date | None = None,
+        underlying: str | None = None,
+    ) -> dict[str, int]:
+        """Per instrument_token, the OI from that token's latest snapshot at or before ``target``
+        (the point-in-time anchor for rolling-window OI trends). A token is present in the result
+        only if at least one snapshot precedes ``target``; tokens with no prior snapshot are
+        OMITTED (callers treat absence as "no anchor" / unavailable, distinct from a zero OI).
+
+        Backed by the composite index (instrument_token, trading_day, timestamp)."""
+        day = _today_str(trading_day)
+        with Session(self._engine) as session:
+            anchor_q = (
+                select(func.max(OptionChainSnapshotRow.id))
+                .where(OptionChainSnapshotRow.trading_day == day)
+                .where(col(OptionChainSnapshotRow.timestamp) <= target)
+                .group_by(col(OptionChainSnapshotRow.instrument_token))
+            )
+            if underlying is not None:
+                anchor_q = anchor_q.where(OptionChainSnapshotRow.underlying == underlying)
+            rows = session.exec(
+                select(OptionChainSnapshotRow).where(col(OptionChainSnapshotRow.id).in_(anchor_q))
+            )
+            return {r.instrument_token: (r.oi or 0) for r in rows}
+
+    def oi_anchors_for_windows(
+        self,
+        now: datetime,
+        window_minutes: list[int],
+        trading_day: date | None = None,
+        underlying: str | None = None,
+    ) -> dict[int, dict[str, int]]:
+        """Resolve anchor OI per token for each look-back window. Returns a mapping
+        ``{window_minutes: {instrument_token: anchor_oi}}``. One grouped query per window
+        (batched over all tokens), per the design's Decision 4. A token missing from a
+        window's inner dict means no snapshot precedes ``now - window`` (anchor unavailable)."""
+        out: dict[int, dict[str, int]] = {}
+        for minutes in window_minutes:
+            target = now - timedelta(minutes=minutes)
+            out[minutes] = self.oi_at_or_before(target, trading_day=trading_day, underlying=underlying)
+        return out
+
     def prune_snapshots(self, older_than_days: int, today: date | None = None) -> int:
         """Delete option-chain snapshots older than ``older_than_days``. Returns rows deleted."""
         cutoff = ((today or date.today()) - timedelta(days=older_than_days)).isoformat()

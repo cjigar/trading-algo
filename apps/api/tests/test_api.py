@@ -77,6 +77,32 @@ def test_chain(client, auth, repo):
     row = chain["per_strike"][0]
     assert row["is_atm"] is True
     assert row["ce_chg_oi"] == 1000 and row["pe_chg_oi"] == 200  # 5000-4000, 1000-800
+    # trend fields present for every configured window on both sides
+    assert set(row["ce_oi_trends"]) == {"1m", "3m", "5m", "15m"}
+    assert set(row["pe_oi_trends"]) == {"1m", "3m", "5m", "15m"}
+    # both snapshots were written ~now, so now-Nmin has no prior anchor -> na
+    assert row["ce_oi_trends"]["1m"]["dir"] == "na"
+    assert row["ce_oi_trends"]["1m"]["delta"] is None
+
+
+def test_chain_oi_trends_with_history(client, auth, repo):
+    from datetime import timedelta
+    now = datetime.utcnow()
+    # anchor snapshot 10 minutes ago (oi=4000) ...
+    repo.write_chain_snapshots([
+        {"underlying": "NIFTY", "strike": "23000", "option_type": "CE", "instrument_token": "c1",
+         "oi": 4000, "ltp": "100", "volume": 10, "timestamp": now - timedelta(minutes=10)},
+    ])
+    # ... and the latest snapshot now (oi=5000)
+    repo.write_chain_snapshots([
+        {"underlying": "NIFTY", "strike": "23000", "option_type": "CE", "instrument_token": "c1",
+         "oi": 5000, "ltp": "100", "volume": 10, "timestamp": now},
+    ])
+    row = client.get("/api/chain", params={"underlying": "NIFTY"}, headers=auth).json()["per_strike"][0]
+    # now-1/3/5m all land after the 10-min-old anchor -> Up 1000; now-15m precedes it -> na
+    assert row["ce_oi_trends"]["1m"] == {"dir": "up", "delta": 1000}
+    assert row["ce_oi_trends"]["5m"] == {"dir": "up", "delta": 1000}
+    assert row["ce_oi_trends"]["15m"]["dir"] == "na"
 
 
 def test_control_enqueues_command(client, auth, repo):
@@ -107,3 +133,6 @@ def test_stream_payload_builder(repo):
     payload = build_stream_payload()
     assert set(payload) == {"state", "pnl", "chain"}
     assert payload["state"]["algo_state"] == "HALTED"
+    # chain payload carries per-strike trend fields identical in shape to /api/chain
+    for row in payload["chain"]["per_strike"]:
+        assert "ce_oi_trends" in row and "pe_oi_trends" in row

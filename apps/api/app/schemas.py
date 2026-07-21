@@ -68,6 +68,13 @@ class OrderOut(BaseModel):
     order_time: str
 
 
+class OiTrendOut(BaseModel):
+    """One look-back window's OI trend: dir in up|down|flat|na; delta null when dir==na."""
+
+    dir: str
+    delta: int | None = None
+
+
 class ChainStrikeOut(BaseModel):
     strike: float
     ce_oi: int
@@ -77,6 +84,9 @@ class ChainStrikeOut(BaseModel):
     pe_ltp: float
     pe_chg_oi: int
     is_atm: bool
+    # Per-window OI trends keyed by window label (e.g. "1m", "3m"). Empty when trends not computed.
+    ce_oi_trends: dict[str, OiTrendOut] = {}
+    pe_oi_trends: dict[str, OiTrendOut] = {}
 
 
 class ChainOut(BaseModel):
@@ -157,13 +167,25 @@ def broker_pnl_out(rows: list[dict]) -> BrokerPnLOut:
     )
 
 
+def _trends_out(trends: dict) -> dict[str, OiTrendOut]:
+    """Map reporting OiTrend (keyed by window-minutes) to API OiTrendOut (keyed 'Nm')."""
+    return {f"{w}m": OiTrendOut(dir=t.direction, delta=t.delta) for w, t in trends.items()}
+
+
 def chain_out(rows: list, underlying: str | None = None,
-              oi_baseline: dict[str, int] | None = None) -> ChainOut:
-    cs = summarize_chain(rows, oi_baseline)
+              oi_baseline: dict[str, int] | None = None,
+              oi_anchors: dict[int, dict[str, int]] | None = None,
+              trend_windows: list[int] | None = None,
+              flat_threshold: int = 0) -> ChainOut:
+    cs = summarize_chain(
+        rows, oi_baseline, oi_anchors=oi_anchors,
+        trend_windows=trend_windows, flat_threshold=flat_threshold,
+    )
     return ChainOut(
         underlying=underlying, atm=float(cs.atm) if cs.atm is not None else None,
         ce_oi_total=cs.ce_oi_total, pe_oi_total=cs.pe_oi_total, selected_side=cs.selected_side,
         per_strike=[ChainStrikeOut(
             strike=float(x.strike), ce_oi=x.ce_oi, ce_ltp=float(x.ce_ltp), ce_chg_oi=x.ce_chg_oi,
             pe_oi=x.pe_oi, pe_ltp=float(x.pe_ltp), pe_chg_oi=x.pe_chg_oi, is_atm=x.is_atm,
+            ce_oi_trends=_trends_out(x.ce_oi_trends), pe_oi_trends=_trends_out(x.pe_oi_trends),
         ) for x in cs.per_strike])

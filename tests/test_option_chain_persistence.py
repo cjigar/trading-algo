@@ -39,6 +39,63 @@ def test_prune_snapshots(repo: Repository):
     assert remaining == {"T2"}
 
 
+def test_oi_at_or_before_selects_latest_prior_row(repo: Repository):
+    # T1 ticks at 10:00 (oi=1000) and 10:05 (oi=1500); anchor as of 10:03 must be the 10:00 row.
+    repo.write_chain_snapshots([_snap("T1", "23000", oi=1000, ts=datetime(2025, 1, 15, 10, 0))])
+    repo.write_chain_snapshots([_snap("T1", "23000", oi=1500, ts=datetime(2025, 1, 15, 10, 5))])
+    anchors = repo.oi_at_or_before(datetime(2025, 1, 15, 10, 3))
+    assert anchors == {"T1": 1000}
+
+
+def test_oi_at_or_before_boundary_is_inclusive(repo: Repository):
+    # A snapshot exactly at the target timestamp counts (at-or-before).
+    repo.write_chain_snapshots([_snap("T1", "23000", oi=1000, ts=datetime(2025, 1, 15, 10, 0))])
+    anchors = repo.oi_at_or_before(datetime(2025, 1, 15, 10, 0))
+    assert anchors == {"T1": 1000}
+
+
+def test_oi_at_or_before_omits_tokens_with_no_prior_row(repo: Repository):
+    # Target precedes T1's only snapshot -> no anchor -> token omitted (not zero).
+    repo.write_chain_snapshots([_snap("T1", "23000", oi=1000, ts=datetime(2025, 1, 15, 10, 5))])
+    anchors = repo.oi_at_or_before(datetime(2025, 1, 15, 10, 0))
+    assert anchors == {}
+
+
+def test_oi_at_or_before_multiple_tokens(repo: Repository):
+    repo.write_chain_snapshots([_snap("T1", "23000", oi=1000, ts=datetime(2025, 1, 15, 10, 0))])
+    repo.write_chain_snapshots([_snap("T2", "23050", oi=2000, ts=datetime(2025, 1, 15, 10, 2))])
+    # T3 only appears after the target -> omitted.
+    repo.write_chain_snapshots([_snap("T3", "23100", oi=3000, ts=datetime(2025, 1, 15, 10, 9))])
+    anchors = repo.oi_at_or_before(datetime(2025, 1, 15, 10, 4))
+    assert anchors == {"T1": 1000, "T2": 2000}
+
+
+def test_oi_anchors_for_windows(repo: Repository):
+    now = datetime(2025, 1, 15, 10, 15)
+    # T1 history: 10:00 (oi=1000), 10:12 (oi=1400), 10:14 (oi=1600).
+    repo.write_chain_snapshots([_snap("T1", "23000", oi=1000, ts=datetime(2025, 1, 15, 10, 0))])
+    repo.write_chain_snapshots([_snap("T1", "23000", oi=1400, ts=datetime(2025, 1, 15, 10, 12))])
+    repo.write_chain_snapshots([_snap("T1", "23000", oi=1600, ts=datetime(2025, 1, 15, 10, 14))])
+    anchors = repo.oi_anchors_for_windows(now, [1, 3, 5, 15])
+    # now-1m=10:14 -> 1600; now-3m=10:12 -> 1400; now-5m=10:10 -> 1000; now-15m=10:00 -> 1000
+    assert anchors[1] == {"T1": 1600}
+    assert anchors[3] == {"T1": 1400}
+    assert anchors[5] == {"T1": 1000}
+    assert anchors[15] == {"T1": 1000}
+
+
+def test_oi_anchors_for_windows_unavailable_when_history_too_short(repo: Repository):
+    now = datetime(2025, 1, 15, 10, 15)
+    # Only a 10:14 snapshot: within the 1m window there is no PRIOR row, but 3/5/15m windows
+    # target times all precede it -> unavailable for those.
+    repo.write_chain_snapshots([_snap("T1", "23000", oi=1600, ts=datetime(2025, 1, 15, 10, 14))])
+    anchors = repo.oi_anchors_for_windows(now, [1, 3, 5, 15])
+    assert anchors[1] == {"T1": 1600}  # 10:14 <= now-1m (10:14)
+    assert anchors[3] == {}
+    assert anchors[5] == {}
+    assert anchors[15] == {}
+
+
 class FakeClock:
     def __init__(self):
         self.t = 0.0

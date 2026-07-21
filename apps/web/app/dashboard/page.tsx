@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { Banner, DataTable, Metric, Tabs } from "@/components/ui";
-import { api, clearToken, type BrokerPnL, type Chain, type Order, type Position, type Trade } from "@/lib/api";
+import { api, clearToken, type BrokerPnL, type Chain, type OiTrends, type Order, type Position, type Trade } from "@/lib/api";
 import { useStream } from "@/lib/useStream";
 
 const TABS = ["P&L", "Positions", "Orders", "Trades", "Option Chain", "Config"];
@@ -63,6 +63,10 @@ export default function Dashboard() {
   const underlyings = state?.oi_underlyings ?? [];
   const activeUnderlying = state?.active_underlying ?? null;
   const shownUnderlying = chainUnderlying ?? chainView?.underlying ?? activeUnderlying;
+  // When following today's active underlying, render the SSE chain (updates ~3s) so trend arrows
+  // stay live; for a manually selected non-active underlying fall back to the 5s poll.
+  const followingToday = !chainUnderlying || chainUnderlying === activeUnderlying;
+  const displayChain = followingToday && data?.chain ? data.chain : chainView;
 
   return (
     <main className="mx-auto max-w-6xl space-y-4 p-6">
@@ -159,15 +163,15 @@ export default function Dashboard() {
               </button>
             )}
           </div>
-          {chainView ? (
+          {displayChain ? (
             <>
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                <Metric label="ATM strike" value={chainView.atm ? chainView.atm.toLocaleString() : "—"} />
-                <Metric label="Total CE OI" value={chainView.ce_oi_total.toLocaleString()} />
-                <Metric label="Total PE OI" value={chainView.pe_oi_total.toLocaleString()} />
-                <Metric label="Higher-OI side" value={chainView.selected_side} />
+                <Metric label="ATM strike" value={displayChain.atm ? displayChain.atm.toLocaleString() : "—"} />
+                <Metric label="Total CE OI" value={displayChain.ce_oi_total.toLocaleString()} />
+                <Metric label="Total PE OI" value={displayChain.pe_oi_total.toLocaleString()} />
+                <Metric label="Higher-OI side" value={displayChain.selected_side} />
               </div>
-              <OptionChainTable chain={chainView} />
+              <OptionChainTable chain={displayChain} />
             </>
           ) : (
             <p className="text-sm text-neutral-500">No chain data for {shownUnderlying ?? "the selected underlying"} yet.</p>
@@ -241,6 +245,44 @@ function BrokerPnLTable({ pnl }: { pnl: BrokerPnL }) {
 // Classic option-chain layout: calls on the left, strike in the middle, puts on the right.
 // Each side shows OI, intraday change-in-OI, and LTP; the OI cell carries a depth bar and the
 // ATM strike's row is highlighted.
+// Window labels sorted by their numeric minute prefix (e.g. "1m" < "3m" < "15m").
+function sortedWindows(trends: OiTrends | undefined): string[] {
+  if (!trends) return [];
+  return Object.keys(trends).sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+}
+
+// Compact per-window OI-trend indicators for one side. na renders as a neutral placeholder,
+// visually distinct from a directional arrow (spec: unavailable !== false direction).
+function TrendCell({ trends, align }: { trends: OiTrends | undefined; align: "left" | "right" }) {
+  const windows = sortedWindows(trends);
+  if (windows.length === 0) return <span className="text-neutral-600">—</span>;
+  const glyph = {
+    up: { s: "▲", c: "text-emerald-400" },
+    down: { s: "▼", c: "text-red-400" },
+    flat: { s: "▬", c: "text-neutral-400" },
+    na: { s: "·", c: "text-neutral-600" },
+  } as const;
+  const glyphFor = (dir: string) =>
+    dir === "up" || dir === "down" || dir === "flat" ? glyph[dir] : glyph.na;
+  return (
+    <div className={`flex gap-1.5 ${align === "left" ? "justify-start" : "justify-end"}`}>
+      {windows.map((w) => {
+        const t = trends?.[w];
+        const g = glyphFor(t?.dir ?? "na");
+        const tip = !t || t.dir === "na"
+          ? `${w}: no data`
+          : `${w}: ${t.dir} ${(t.delta ?? 0) > 0 ? "+" : ""}${t.delta}`;
+        return (
+          <span key={w} title={tip} className="flex flex-col items-center leading-none">
+            <span className="text-[9px] text-neutral-500">{w}</span>
+            <span className={g.c}>{g.s}</span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 function OptionChainTable({ chain }: { chain: Chain }) {
   const rows = [...chain.per_strike].sort((a, b) => a.strike - b.strike);
   const maxOi = Math.max(1, ...rows.flatMap((r) => [r.ce_oi, r.pe_oi]));
@@ -259,11 +301,12 @@ function OptionChainTable({ chain }: { chain: Chain }) {
       <table className="w-full text-right text-sm tabular-nums">
         <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
           <tr>
-            <th className="px-3 py-2" colSpan={3}>Calls (CE)</th>
+            <th className="px-3 py-2" colSpan={4}>Calls (CE)</th>
             <th className="px-3 py-2 text-center">Strike</th>
-            <th className="px-3 py-2 text-left" colSpan={3}>Puts (PE)</th>
+            <th className="px-3 py-2 text-left" colSpan={4}>Puts (PE)</th>
           </tr>
           <tr className="text-[10px]">
+            <th className="px-3 py-1">OI Trend</th>
             <th className="px-3 py-1">OI</th>
             <th className="px-3 py-1">Chg OI</th>
             <th className="px-3 py-1">LTP</th>
@@ -271,6 +314,7 @@ function OptionChainTable({ chain }: { chain: Chain }) {
             <th className="px-3 py-1 text-left">LTP</th>
             <th className="px-3 py-1 text-left">Chg OI</th>
             <th className="px-3 py-1 text-left">OI</th>
+            <th className="px-3 py-1 text-left">OI Trend</th>
           </tr>
         </thead>
         <tbody>
@@ -279,6 +323,7 @@ function OptionChainTable({ chain }: { chain: Chain }) {
               key={r.strike}
               className={`border-t border-neutral-800/60 ${r.is_atm ? "bg-blue-950/60" : ""}`}
             >
+              <td className="px-3 py-1.5"><TrendCell trends={r.ce_oi_trends} align="right" /></td>
               <td className="px-3 py-1.5" style={bar(r.ce_oi, "ce")}>{r.ce_oi.toLocaleString()}</td>
               <td className="px-3 py-1.5">{chg(r.ce_chg_oi)}</td>
               <td className="px-3 py-1.5 text-emerald-400">{r.ce_ltp.toFixed(2)}</td>
@@ -288,6 +333,7 @@ function OptionChainTable({ chain }: { chain: Chain }) {
               <td className="px-3 py-1.5 text-left text-red-400">{r.pe_ltp.toFixed(2)}</td>
               <td className="px-3 py-1.5 text-left">{chg(r.pe_chg_oi)}</td>
               <td className="px-3 py-1.5 text-left" style={bar(r.pe_oi, "pe")}>{r.pe_oi.toLocaleString()}</td>
+              <td className="px-3 py-1.5 text-left"><TrendCell trends={r.pe_oi_trends} align="left" /></td>
             </tr>
           ))}
         </tbody>

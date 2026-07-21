@@ -77,6 +77,12 @@ class Settings(BaseSettings):
     sensex_strike_step: Decimal = Decimal("100")  # SENSEX strike interval
     chain_eval_seconds: int = 30  # cadence for OI evaluation
     snapshot_min_interval_seconds: int = 2  # min gap between persisted snapshots per token
+    # Look-back windows (minutes) for rolling OI-trend arrows on the chain. Each window compares
+    # current OI to the OI at now-window. Keep the shortest window >= a few * the snapshot interval
+    # above so it has prior anchor rows (at 2s spacing a 1-min window has ~30 anchors).
+    oi_trend_windows: Annotated[list[int], NoDecode] = Field(default_factory=lambda: [1, 3, 5, 15])
+    # Absolute OI change (contracts) below which a window is classified Flat rather than Up/Down.
+    oi_trend_flat_threshold: int = 0
     chain_retention_days: int = 30  # prune option-chain snapshots older than this
     margin_buffer: Decimal = Decimal("0")  # fraction of extra margin headroom required
     # Weekdays each underlying may take entries (Mon=0 … Sun=6).
@@ -133,6 +139,13 @@ class Settings(BaseSettings):
                 continue
             out.append(names[token[:3]] if token[:3] in names else int(token))
         return out
+
+    @field_validator("oi_trend_windows", mode="before")
+    @classmethod
+    def _parse_trend_windows(cls, v: object) -> object:
+        if not isinstance(v, str):
+            return v
+        return [int(item.strip()) for item in v.split(",") if item.strip()]
 
     @field_validator("market_holidays", mode="before")
     @classmethod
@@ -233,6 +246,7 @@ EDITABLE_FIELDS: frozenset[str] = frozenset({
     "strike_window", "chain_feed_window", "otm_strikes", "chain_eval_seconds",
     "daily_loss_cap", "max_positions", "max_trades_per_day", "flatten_on_kill_switch",
     "candle_timeframe_minutes", "strike_selection",
+    "oi_trend_windows", "oi_trend_flat_threshold",
 })
 
 

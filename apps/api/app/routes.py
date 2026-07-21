@@ -94,6 +94,17 @@ def get_broker_pnl(bridge: StateBridge = Depends(get_bridge)):
     return broker_pnl_out(bridge.broker_positions())
 
 
+def _chain_out_with_trends(bridge: StateBridge, settings: Settings, underlying: str | None) -> ChainOut:
+    """Build the chain response including rolling OI-trend windows from settings. Shared by the
+    /chain endpoint and the SSE stream so both carry identical trend fields."""
+    windows = settings.oi_trend_windows
+    return chain_out(
+        bridge.chain(underlying), underlying, bridge.chain_oi_baseline(underlying),
+        oi_anchors=bridge.chain_oi_anchors(windows, underlying),
+        trend_windows=windows, flat_threshold=settings.oi_trend_flat_threshold,
+    )
+
+
 @api.get("/chain", response_model=ChainOut)
 def get_chain(
     underlying: str | None = None,
@@ -104,7 +115,7 @@ def get_chain(
     if not underlying:
         active = settings.active_underlying_for_today()
         underlying = active.value if active else None
-    return chain_out(bridge.chain(underlying), underlying, bridge.chain_oi_baseline(underlying))
+    return _chain_out_with_trends(bridge, settings, underlying)
 
 
 # --- Controls (enqueue commands; never the broker order path) -------------------------
@@ -161,7 +172,7 @@ def build_stream_payload() -> dict[str, Any]:
     return {
         "state": state_out(settings, state).model_dump(),
         "pnl": pnl_out(state).model_dump(),
-        "chain": chain_out(bridge.chain(u), u, bridge.chain_oi_baseline(u)).model_dump(),
+        "chain": _chain_out_with_trends(bridge, settings, u).model_dump(),
     }
 
 

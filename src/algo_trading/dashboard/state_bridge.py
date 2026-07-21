@@ -9,6 +9,7 @@ replaying the day's trades through the same PositionTracker the loop uses.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from decimal import Decimal
 
 from algo_trading.config.settings import Settings
@@ -64,6 +65,17 @@ class StateBridge:
     def chain_oi_baseline(self, underlying: str | None = None) -> dict[str, int]:
         """Day-open OI per token (intraday change-in-OI baseline) for the chain view."""
         return self._repo.chain_day_open_oi(underlying=underlying)
+
+    def chain_oi_anchors(
+        self, window_minutes: list[int], underlying: str | None = None
+    ) -> dict[int, dict[str, int]]:
+        """Anchor OI per token for each look-back window (for rolling OI-trend arrows).
+        Returns {window_minutes: {token: anchor_oi}} using now (UTC) as the reference."""
+        if not window_minutes:
+            return {}
+        return self._repo.oi_anchors_for_windows(
+            datetime.utcnow(), window_minutes, underlying=underlying
+        )
 
     def broker_positions(self) -> list[dict]:
         """The live broker positions captured at the last reconcile (raw broker dicts)."""

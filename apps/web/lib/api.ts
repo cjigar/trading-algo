@@ -102,9 +102,14 @@ export type Order = {
   order_id: string; symbol: string; side: string; quantity: number; filled_quantity: number;
   price: string; order_type: string; product: string; status: string; order_time: string;
 };
+// One look-back window's OI trend: dir in up|down|flat|na; delta null when dir==="na".
+export type OiTrend = { dir: "up" | "down" | "flat" | "na"; delta: number | null };
+// Per-window trends keyed by window label, e.g. { "1m": {...}, "3m": {...} }.
+export type OiTrends = Record<string, OiTrend>;
 export type ChainStrike = {
   strike: number; ce_oi: number; ce_ltp: number; ce_chg_oi: number;
   pe_oi: number; pe_ltp: number; pe_chg_oi: number; is_atm: boolean;
+  ce_oi_trends?: OiTrends; pe_oi_trends?: OiTrends;
 };
 export type Chain = {
   underlying: string | null; atm: number | null; ce_oi_total: number; pe_oi_total: number;
