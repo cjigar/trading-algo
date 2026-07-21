@@ -5,7 +5,7 @@ The persistence layer is dual-dialect: SQLite locally and in tests, PostgreSQL i
 ## What Changes
 
 - **BREAKING**: Remove SQLite entirely. `ALGO_DATABASE_URL` becomes required and must be a PostgreSQL URL; `ALGO_DB_PATH`, `create_db_engine()`, and the SQLite fallback in `resolved_database_url()` are deleted. Startup fails fast with a clear error on a missing or non-Postgres URL.
-- Run PostgreSQL with the **TimescaleDB** extension (compose image swapped to `timescale/timescaledb-ha:pg16`) and treat time-series tables as first-class.
+- Run PostgreSQL with the **TimescaleDB** extension (compose image swapped to `timescale/timescaledb:latest-pg16`) and treat time-series tables as first-class.
 - Convert `option_chain_snapshots` to a **hypertable** partitioned on `timestamp`, with a compression policy on chunks older than a configured age and a retention policy replacing the hand-rolled `prune_snapshots` delete.
 - Add a **continuous aggregate** for per-token OI/LTP buckets so the rolling OI-trend anchor lookups (`oi_at_or_before`, `oi_anchors_for_windows`) read pre-bucketed rows instead of scanning raw ticks, with the raw table as fallback for the newest, not-yet-materialized bucket.
 - Also make `pnl_snapshots` a hypertable (append-only, time-ordered, same access pattern).

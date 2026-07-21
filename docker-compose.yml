@@ -2,7 +2,12 @@ services:
   db:
     # TimescaleDB (a superset of stock PG16): hypertables, compression, retention policies and
     # continuous aggregates for the option-chain snapshot series. Same major version, same volume.
-    image: timescale/timescaledb-ha:pg16
+    #
+    # NOT the -ha variant: it sets PGDATA=/home/postgres/pgdata/data, so it ignores a volume
+    # mounted at the standard path and silently initialises an empty cluster instead of adopting
+    # the existing one. This image keeps PGDATA=/var/lib/postgresql/data, matching both stock
+    # postgres and the pgdata volume below.
+    image: timescale/timescaledb:latest-pg16
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-algo}

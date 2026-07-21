@@ -72,7 +72,7 @@ make docker-down           # stop
 ```
 
 - **PostgreSQL is required** — `ALGO_DATABASE_URL` must be set to a `postgresql+psycopg://…` URL and there is no file/SQLite fallback. Compose sets it to the `db` service automatically; for local runs start the same container with `make db-up` (published on `127.0.0.1:55432`) and use the URL in `.env.example`.
-- The `db` service runs **TimescaleDB** (`timescale/timescaledb-ha:pg16`). At startup the app creates the extension, converts `option_chain_snapshots` and `pnl_snapshots` to hypertables, and applies the compression, retention, and continuous-aggregate policies — all idempotent, so restarts are no-ops. Tuning lives in `ALGO_CHAIN_*` settings.
+- The `db` service runs **TimescaleDB** (`timescale/timescaledb:latest-pg16` — *not* the `-ha` variant, which relocates `PGDATA` and would ignore the existing `pgdata` volume). At startup the app creates the extension, converts `option_chain_snapshots` and `pnl_snapshots` to hypertables, and applies the compression, retention, and continuous-aggregate policies — all idempotent, so restarts are no-ops. Tuning lives in `ALGO_CHAIN_*` settings.
 - To bake the Kotak SDK into the image (for live mode), build with `INSTALL_BROKER=1` (env var or `--build-arg`).
 - Postgres data persists in the `pgdata` volume; `make docker-down` keeps it (`docker compose down -v` wipes it).
 

@@ -38,7 +38,7 @@
 ## 6. Packaging and deployment
 
 - [x] 6.1 Move `psycopg[binary]` from the `postgres` extra into required dependencies and drop the extra
-- [x] 6.2 Switch the compose `db` image to `timescale/timescaledb-ha:pg16`, keeping the `pgdata` volume and healthcheck
+- [x] 6.2 Switch the compose `db` image to `timescale/timescaledb:latest-pg16`, keeping the `pgdata` volume and healthcheck (the `-ha` variant relocates `PGDATA` and orphans the volume)
 - [x] 6.3 Remove `ALGO_DB_PATH` from `.env` templates and `deploy/`; make `ALGO_DATABASE_URL` explicit for every service
 - [x] 6.4 Update `README.md`: architecture diagram, persistence section, local `make db-up` setup, go-live/deploy checklist including the pre-deploy `pgdata` snapshot and the out-of-market-hours deploy window
 

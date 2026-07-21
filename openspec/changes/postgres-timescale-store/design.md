@@ -24,11 +24,11 @@ Constraints: single-node deployment, one small VPS, no DBA; the loop must not st
 
 ### Decision 1: TimescaleDB rather than hand-rolled partitioning
 
-Use `timescale/timescaledb-ha:pg16` and hypertables.
+Use `timescale/timescaledb:latest-pg16` and hypertables. (Not the `-ha` variant: it sets `PGDATA=/home/postgres/pgdata/data`, so a volume mounted at the stock path is ignored and an empty cluster is initialised in its place — caught during the production deploy.)
 
 *Why:* the three things this change needs — automatic time partitioning, columnar compression of old chunks, and a maintained rolling rollup — are exactly what hypertables, compression policies, and continuous aggregates provide. Hand-rolling them on stock Postgres means a partition-creation job, a drop-old-partitions job, and a rollup table with its own refresh job — three cron-shaped things to get wrong, in a repo with no DBA.
 
-*Alternatives:* (a) declarative `PARTITION BY RANGE (timestamp)` plus custom maintenance — more code, no compression story; (b) single table + index + retention delete — simplest, but the OI-window scans and the retention delete both degrade with history, which is the problem being solved. `timescaledb-ha` is a superset of the stock image, so `pgdata` and every existing table carry over unchanged.
+*Alternatives:* (a) declarative `PARTITION BY RANGE (timestamp)` plus custom maintenance — more code, no compression story; (b) single table + index + retention delete — simplest, but the OI-window scans and the retention delete both degrade with history, which is the problem being solved. The image is a superset of the stock one and keeps `PGDATA=/var/lib/postgresql/data`, so `pgdata` and every existing table carry over unchanged.
 
 ### Decision 2: Hypertables on `option_chain_snapshots` and `pnl_snapshots`, keyed on `(timestamp, id)`
 
@@ -71,7 +71,7 @@ Remove `db_path`; make `database_url` required with a validator rejecting non-`p
 
 ## Risks / Trade-offs
 
-- **Timescale image swap on a live volume fails or the extension is unavailable** → `timescaledb-ha:pg16` is the same PG16 major version, so the volume mounts as-is; bootstrap creates the extension on first boot. Verified on a copy of the volume before touching production; rollback is switching the image tag back, since nothing in the base tables changed until hypertable conversion runs.
+- **Timescale image swap on a live volume fails or the extension is unavailable** → `timescale/timescaledb:latest-pg16` is the same PG16 major version and the same `PGDATA` path, so the volume mounts as-is; bootstrap creates the extension on first boot. Verified on a copy of the volume before touching production; rollback is switching the image tag back, since nothing in the base tables changed until hypertable conversion runs.
 - **Hypertable conversion of a populated table locks the table** → conversion happens at startup, out of market hours, with `migrate_data => true`; the day's data volume is small enough (tens of MB) that the lock window is seconds. Deploy outside 09:15–15:30 IST.
 - **Continuous aggregate returns a stale anchor near the watermark** → the watermark check routes tail reads to the raw table; a unit test asserts aggregate and raw paths return identical mappings for the same target.
 - **Retention policy silently drops data a developer wanted** → retention is configured in days via `ALGO_CHAIN_RETENTION_DAYS` and logged at startup with its resolved value; default matches today's 30-day prune.

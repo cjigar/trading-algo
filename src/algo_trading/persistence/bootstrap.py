@@ -116,7 +116,7 @@ def _install_extension(conn: Connection) -> None:
     if available is None:
         raise TimescaleUnavailableError(
             "The 'timescaledb' extension is not available on this PostgreSQL server. "
-            "Use the timescale/timescaledb-ha:pg16 image (see docker-compose.yml)."
+            "Use the timescale/timescaledb:latest-pg16 image (see docker-compose.yml)."
         )
     conn.execute(text("CREATE EXTENSION IF NOT EXISTS timescaledb"))
 
