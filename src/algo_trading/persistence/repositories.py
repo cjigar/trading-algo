@@ -9,10 +9,12 @@ rows; rolling OI anchors additionally read the ``chain_oi_1m`` continuous aggreg
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import Engine, delete, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlmodel import Session, col, select
 
 from algo_trading.domain.enums import AlgoState, ExchangeSegment, OptionType, Side, Underlying
@@ -24,6 +26,7 @@ from algo_trading.persistence.db import (
     BrokerOrderRow,
     BrokerPositionRow,
     ControlCommandRow,
+    LiveQuoteRow,
     OptionChainSnapshotRow,
     OrderEventRow,
     OrderRow,
@@ -66,6 +69,16 @@ SELECT DISTINCT ON (instrument_token) instrument_token, oi
 FROM (SELECT * FROM raw_tail UNION ALL SELECT * FROM agg) u
 ORDER BY instrument_token, at DESC
 """
+
+
+@dataclass(frozen=True)
+class PnlSnapshot:
+    """One periodic P&L reading taken by the trading loop, with the time it was taken."""
+
+    realized: Decimal
+    unrealized: Decimal
+    total: Decimal
+    at: datetime
 
 
 def _today_str(trading_day: date | None = None) -> str:
@@ -468,13 +481,85 @@ class Repository:
             session.commit()
 
     def latest_pnl(self, trading_day: date | None = None) -> Decimal | None:
+        snap = self.latest_pnl_snapshot(trading_day)
+        return snap.total if snap else None
+
+    def latest_pnl_snapshot(self, trading_day: date | None = None) -> PnlSnapshot | None:
+        """The loop's most recent P&L reading, with the time it was taken.
+
+        The dashboard computes its own P&L from trades and quotes; this is the loop's independent
+        claim, carried alongside so a stalled loop shows up as an ageing snapshot instead of a
+        confidently frozen number.
+        """
         with Session(self._engine) as session:
             row = session.exec(
                 select(PnlSnapshotRow)
                 .where(PnlSnapshotRow.trading_day == _today_str(trading_day))
-                .order_by(PnlSnapshotRow.id.desc())  # type: ignore[union-attr]
+                .order_by(
+                    col(PnlSnapshotRow.timestamp).desc(),
+                    col(PnlSnapshotRow.id).desc(),
+                )
             ).first()
-            return Decimal(row.total) if row else None
+        if row is None:
+            return None
+        return PnlSnapshot(
+            realized=_safe_decimal(row.realized),
+            unrealized=_safe_decimal(row.unrealized),
+            total=_safe_decimal(row.total),
+            at=row.timestamp,
+        )
+
+    # -- Live quotes (latest price per token; mutable, one row per token) ----------------
+
+    def upsert_live_quotes(
+        self, quotes: dict[str, Decimal], trading_day: date | None = None
+    ) -> int:
+        """Publish the loop's current price for each token, replacing any previous row for it.
+
+        Upsert rather than append: readers only ever want "the price now", and an append-only
+        feed of every tick is already persisted as ``option_chain_snapshots``.
+        """
+        if not quotes:
+            return 0
+        day = _today_str(trading_day)
+        now = datetime.utcnow()
+        rows = [
+            {"instrument_token": str(token), "trading_day": day, "ltp": str(ltp), "timestamp": now}
+            for token, ltp in quotes.items()
+        ]
+        stmt = pg_insert(LiveQuoteRow).values(rows)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["instrument_token"],
+            set_={
+                "ltp": stmt.excluded.ltp,
+                "timestamp": stmt.excluded.timestamp,
+                "trading_day": stmt.excluded.trading_day,
+            },
+        )
+        with Session(self._engine) as session:
+            session.exec(stmt)
+            session.commit()
+        return len(rows)
+
+    def live_quotes(
+        self, tokens: list[str] | None = None, *, max_age_seconds: float | None = None
+    ) -> dict[str, Decimal]:
+        """Latest published price per token.
+
+        ``tokens`` restricts the read to the ones the caller cares about (an empty list reads
+        nothing). ``max_age_seconds`` drops readings older than that: a feed that died an hour ago
+        must not keep marking positions at the last price it happened to see.
+        """
+        if tokens is not None and not tokens:
+            return {}
+        stmt = select(LiveQuoteRow)
+        if tokens is not None:
+            stmt = stmt.where(col(LiveQuoteRow.instrument_token).in_([str(t) for t in tokens]))
+        if max_age_seconds is not None:
+            cutoff = datetime.utcnow() - timedelta(seconds=max_age_seconds)
+            stmt = stmt.where(col(LiveQuoteRow.timestamp) >= cutoff)
+        with Session(self._engine) as session:
+            return {r.instrument_token: _safe_decimal(r.ltp) for r in session.exec(stmt)}
 
     # -- Audit (append-only) -----------------------------------------------------------
 

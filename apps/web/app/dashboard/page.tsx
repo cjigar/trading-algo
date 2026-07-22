@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { Banner, DataTable, Metric, Tabs } from "@/components/ui";
-import { api, clearToken, type BrokerPnL, type Chain, type OiTrends, type Order, type Position, type Trade } from "@/lib/api";
+import { api, clearToken, type BrokerPnL, type Chain, type EnginePnL, type OiTrends, type Order, type Trade } from "@/lib/api";
 import { useStream } from "@/lib/useStream";
 
 const TABS = ["P&L", "Positions", "Orders", "Trades", "Option Chain", "Config"];
@@ -11,9 +11,7 @@ const TABS = ["P&L", "Positions", "Orders", "Trades", "Option Chain", "Config"];
 export default function Dashboard() {
   const { data, connected } = useStream();
   const [tab, setTab] = useState("P&L");
-  const [positions, setPositions] = useState<Position[]>([]);
   const [brokerPositions, setBrokerPositions] = useState<Record<string, unknown>[]>([]);
-  const [brokerPnl, setBrokerPnl] = useState<BrokerPnL | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [config, setConfig] = useState<Record<string, unknown>>({});
@@ -22,14 +20,14 @@ export default function Dashboard() {
   const [chainUnderlying, setChainUnderlying] = useState<string | null>(null);
   const [chainView, setChainView] = useState<Chain | null>(null);
 
+  // Positions and broker P&L are no longer polled here — they ride the SSE stream, which keeps
+  // them in step with the P&L numbers computed from the same snapshot.
   const refresh = useCallback(async () => {
-    const [p, bp, bpnl, o, t, c, ch] = await Promise.all([
-      api.positions(), api.brokerPositions(), api.brokerPnl(), api.orders(), api.trades(),
+    const [bp, o, t, c, ch] = await Promise.all([
+      api.brokerPositions(), api.orders(), api.trades(),
       api.config(), api.chain(chainUnderlying ?? undefined),
     ]);
-    setPositions(p);
     setBrokerPositions(bp);
-    setBrokerPnl(bpnl);
     setOrders(o);
     setTrades(t);
     setConfig(c);
@@ -60,6 +58,8 @@ export default function Dashboard() {
 
   const state = data?.state;
   const pnl = data?.pnl;
+  const positions = data?.positions ?? [];
+  const brokerPnl = data?.broker_pnl ?? null;
   const underlyings = state?.oi_underlyings ?? [];
   const activeUnderlying = state?.active_underlying ?? null;
   const shownUnderlying = chainUnderlying ?? chainView?.underlying ?? activeUnderlying;
@@ -110,11 +110,19 @@ export default function Dashboard() {
             </div>
           )}
           <div className="space-y-2">
-            <h2 className="text-sm font-medium text-neutral-300">Algo session P&amp;L (this session&apos;s fills)</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-medium text-neutral-300">Algo session P&amp;L (this session&apos;s fills)</h2>
+              <EngineFreshness engine={pnl.engine} />
+            </div>
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-              <Metric label="Realized P&L" value={pnl.total_realized.toLocaleString()} />
+              <Metric label="Day P&L" value={<Signed value={pnl.day_pnl} />} />
+              <Metric label="Realized" value={<Signed value={pnl.total_realized} />} />
+              <Metric label="Unrealized (open)" value={<Signed value={pnl.total_unrealized} />} />
               <Metric label="Algo state" value={state?.algo_state ?? "—"} />
+            </div>
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
               <Metric label="Fills" value={pnl.trade_count} />
+              <Metric label="Open symbols" value={pnl.open_symbols} />
               <Metric label="Buy / Sell value" value={`${pnl.total_buy_value.toLocaleString()} / ${pnl.total_sell_value.toLocaleString()}`} />
             </div>
             <DataTable rows={pnl.per_symbol as unknown as Record<string, unknown>[]} />
@@ -201,6 +209,36 @@ export default function Dashboard() {
         </div>
       )}
     </main>
+  );
+}
+
+// A rupee amount coloured by sign. Zero reads as neutral rather than "profit".
+function Signed({ value }: { value: number }) {
+  const tone = value > 0 ? "text-emerald-400" : value < 0 ? "text-red-400" : "text-neutral-200";
+  return <span className={tone}>₹{value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>;
+}
+
+// How recently the trading loop published its own P&L. The dashboard computes P&L independently
+// from the loop's published prices, so a stale loop means these numbers are frozen even though the
+// stream itself is healthy — worth saying out loud rather than showing a confident stale figure.
+function EngineFreshness({ engine }: { engine: EnginePnL | null }) {
+  if (!engine) {
+    return (
+      <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-xs text-neutral-400">
+        loop not reporting
+      </span>
+    );
+  }
+  const age = Math.round(engine.age_seconds);
+  // The loop publishes every ~5s; a minute of silence is a problem, not jitter.
+  const stale = age > 60;
+  return (
+    <span
+      className={`rounded px-1.5 py-0.5 text-xs ${stale ? "bg-amber-950 text-amber-400" : "bg-neutral-800 text-neutral-400"}`}
+      title={`Loop last published realized ₹${engine.realized} / unrealized ₹${engine.unrealized}`}
+    >
+      {stale ? `loop stale · ${age}s ago` : `loop live · ${age}s ago`}
+    </span>
   );
 }
 

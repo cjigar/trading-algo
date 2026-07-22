@@ -77,6 +77,10 @@ def main() -> None:
     # OI-selling strategy is evaluated on a timer (not candle-driven); vwap_breakout is tick-driven.
     eval_every = max(1, settings.chain_eval_seconds)
     elapsed = 0
+    # The dashboard process has no broker session, so it can only show live P&L if we publish
+    # ours — and the open positions' prices — to the shared database on a timer.
+    pnl_every = max(1, settings.pnl_snapshot_seconds)
+    since_pnl = 0
     log.info("running", strategy=settings.strategy)
     try:
         while not stop["flag"]:  # pragma: no cover - long-running loop
@@ -99,6 +103,13 @@ def main() -> None:
                 except Exception:  # noqa: BLE001
                     log.exception("oi_evaluation_failed")
                 elapsed = 0
+            since_pnl += 1
+            if since_pnl >= pnl_every:
+                try:
+                    orch.write_pnl_snapshot()
+                except Exception:  # noqa: BLE001
+                    log.exception("pnl_snapshot_failed")
+                since_pnl = 0
             time.sleep(1.0)
     finally:
         scheduler.shutdown()

@@ -106,6 +106,27 @@ class PnlSnapshotRow(SQLModel, table=True):
     total: str
 
 
+class LiveQuoteRow(SQLModel, table=True):
+    """Latest known price per instrument token — the loop's live LTP, published for the dashboard.
+
+    The dashboard runs as a separate process with no broker session, so without this it can only
+    mark open positions at their own fill price and unrealized P&L is structurally zero.
+
+    Deliberately NOT a hypertable and NOT append-only: this is mutable "the price right now"
+    state, one row per token, upserted in place. Price *history* already lives in
+    ``option_chain_snapshots``; duplicating it here would buy nothing and grow without bound.
+    """
+
+    __tablename__ = "live_quotes"
+
+    instrument_token: str = Field(primary_key=True)
+    trading_day: str = Field(index=True)
+    ltp: str = "0"
+    # When the loop observed this price. Readers use it to reject a stale reading rather than
+    # marking positions against a dead feed's last gasp.
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
 class AuditEventRow(SQLModel, table=True):
     """Append-only audit trail (kill-switch, manual halt, login, reconciliation, etc.)."""
 

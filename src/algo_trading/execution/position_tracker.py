@@ -73,6 +73,8 @@ class PositionTracker:
         return (book.last_price - book.avg_price) * direction * Decimal(abs(book.quantity))
 
     def open_positions(self) -> list[Position]:
+        # Snapshot the books first: fills arrive on broker feed threads and can add a book while
+        # the main loop is reading them for a P&L snapshot.
         return [
             Position(
                 instrument=b.instrument,
@@ -82,7 +84,7 @@ class PositionTracker:
                 last_price=b.last_price or b.avg_price,
                 realized_pnl=b.realized,
             )
-            for b in self._books.values()
+            for b in list(self._books.values())
             if b.quantity != 0
         ]
 
@@ -103,11 +105,11 @@ class PositionTracker:
         )
 
     def realized_pnl(self) -> Decimal:
-        return sum((b.realized for b in self._books.values()), Decimal(0))
+        return sum((b.realized for b in list(self._books.values())), Decimal(0))
 
     def unrealized_pnl(self) -> Decimal:
         return sum(
-            (self._unrealized(b) for b in self._books.values() if b.quantity != 0), Decimal(0)
+            (self._unrealized(b) for b in list(self._books.values()) if b.quantity != 0), Decimal(0)
         )
 
     def day_pnl(self) -> Decimal:

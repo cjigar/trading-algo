@@ -131,8 +131,30 @@ def test_stream_payload_builder(repo):
     from algo_trading.domain.enums import AlgoState
     repo.set_algo_state(AlgoState.HALTED, "x")
     payload = build_stream_payload()
-    assert set(payload) == {"state", "pnl", "chain"}
+    # Everything that changes intraday rides the stream, so the dashboard never falls back on a
+    # one-shot fetch that then sits stale.
+    assert set(payload) == {"state", "pnl", "positions", "broker_pnl", "chain"}
     assert payload["state"]["algo_state"] == "HALTED"
     # chain payload carries per-strike trend fields identical in shape to /api/chain
     for row in payload["chain"]["per_strike"]:
         assert "ce_oi_trends" in row and "pe_oi_trends" in row
+
+
+def test_pnl_reports_unrealized_from_published_quotes(client, auth, repo):
+    # These tests share one database, so assert on the change this test causes, not on absolutes.
+    before = client.get("/api/pnl", headers=auth).json()
+
+    repo.record_trade(_trade(Side.BUY, 65, "100"))
+    opened = client.get("/api/pnl", headers=auth).json()
+    # Position is open but the loop has published no price for it, so it stays marked at its fill.
+    assert opened["total_unrealized"] == before["total_unrealized"]
+
+    repo.upsert_live_quotes({_inst().instrument_token: Decimal("130")})
+    repo.record_pnl(Decimal("0"), Decimal("1950"))
+
+    pnl = client.get("/api/pnl", headers=auth).json()
+    assert pnl["total_unrealized"] == before["total_unrealized"] + 1950.0  # (130-100)*65
+    assert pnl["day_pnl"] == pnl["total_realized"] + pnl["total_unrealized"]
+    # The loop's own reading is carried alongside, with its age.
+    assert pnl["engine"]["unrealized"] == 1950.0
+    assert pnl["engine"]["age_seconds"] < 60

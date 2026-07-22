@@ -84,9 +84,16 @@ export type SymbolPnL = {
   symbol: string; buy_qty: number; sell_qty: number; avg_buy: number; avg_sell: number;
   net_qty: number; realized_pnl: number;
 };
+// The trading loop's own last P&L reading. age_seconds grows when the loop stops publishing —
+// treat a large age as "not reporting" regardless of how healthy the numbers look.
+export type EnginePnL = {
+  realized: number; unrealized: number; total: number; age_seconds: number;
+};
 export type PnL = {
-  total_realized: number; total_buy_value: number; total_sell_value: number;
+  total_realized: number; total_unrealized: number; day_pnl: number;
+  total_buy_value: number; total_sell_value: number;
   trade_count: number; matched_symbols: number; open_symbols: number; per_symbol: SymbolPnL[];
+  engine: EnginePnL | null;
 };
 export type BrokerPositionPnL = {
   symbol: string; net_qty: number; buy_qty: number; sell_qty: number;
@@ -115,4 +122,6 @@ export type Chain = {
   underlying: string | null; atm: number | null; ce_oi_total: number; pe_oi_total: number;
   selected_side: string; per_strike: ChainStrike[];
 };
-export type StreamPayload = { state: AlgoState; pnl: PnL; chain: Chain };
+export type StreamPayload = {
+  state: AlgoState; pnl: PnL; positions: Position[]; broker_pnl: BrokerPnL; chain: Chain;
+};

@@ -20,6 +20,21 @@ from algo_trading.persistence.db import create_engine_from_settings
 from algo_trading.persistence.repositories import Repository
 
 
+@dataclass(frozen=True)
+class EnginePnL:
+    """The trading loop's own last P&L reading, and how old it is.
+
+    Carried next to the numbers the dashboard computes itself so the two can be compared: if the
+    loop stops publishing, ``age_seconds`` grows and the UI can say so instead of showing a stale
+    figure that still looks live.
+    """
+
+    realized: Decimal
+    unrealized: Decimal
+    total: Decimal
+    age_seconds: float
+
+
 @dataclass
 class DashboardState:
     algo_state: AlgoState
@@ -32,18 +47,22 @@ class DashboardState:
     audit: list = field(default_factory=list)
     chain: list = field(default_factory=list)
     latest_pnl_snapshot: Decimal | None = None
+    engine_pnl: EnginePnL | None = None
 
 
 class StateBridge:
     def __init__(self, settings: Settings) -> None:
         # A fresh engine over the SAME PostgreSQL database the loop writes to (separate process).
         self._repo = Repository(create_engine_from_settings(settings))
+        self._quote_max_age = float(getattr(settings, "live_quote_max_age_seconds", 60))
 
     def read_state(self) -> DashboardState:
         trades = self._repo.trades_for_day()
         tracker = PositionTracker()
         for trade in trades:
             tracker.on_fill(trade)
+        self._mark_to_market(tracker)
+        snapshot = self._repo.latest_pnl_snapshot()
         return DashboardState(
             algo_state=self._repo.get_algo_state(),
             realized_pnl=tracker.realized_pnl(),
@@ -54,8 +73,24 @@ class StateBridge:
             orders=self._repo.broker_orders_for_day(),
             audit=self._repo.audit_events(),
             chain=self._repo.latest_chain_state(),
-            latest_pnl_snapshot=self._repo.latest_pnl(),
+            latest_pnl_snapshot=snapshot.total if snapshot else None,
+            engine_pnl=_engine_pnl(snapshot),
         )
+
+    def _mark_to_market(self, tracker: PositionTracker) -> None:
+        """Mark the replayed positions at the loop's published prices.
+
+        Replaying fills alone leaves every position marked at its own fill price, so unrealized
+        P&L would always be zero. Positions with no fresh quote keep the fill price — the same
+        behaviour as before, and visible as a stale ``engine_pnl`` rather than a silent zero.
+        """
+        tokens = [p.instrument.instrument_token for p in tracker.open_positions()]
+        if not tokens:
+            return
+        for token, ltp in self._repo.live_quotes(
+            tokens, max_age_seconds=self._quote_max_age
+        ).items():
+            tracker.on_price(token, ltp)
 
     def chain(self, underlying: str | None = None) -> list:
         """Latest option-chain snapshots, optionally filtered to one underlying."""
@@ -90,3 +125,21 @@ class StateBridge:
 
     def send_flatten(self) -> None:
         self._repo.enqueue_command("flatten")
+
+
+def _engine_pnl(snapshot) -> EnginePnL | None:
+    """Adapt a stored P&L snapshot to the dashboard view, resolving its age against now.
+
+    Snapshot timestamps are written as naive UTC (``datetime.utcnow``), so the age is computed
+    against the same clock. A clock skew between the two processes can only make the age look
+    slightly off, never negative-and-alarming — it is floored at zero.
+    """
+    if snapshot is None:
+        return None
+    age = (datetime.utcnow() - snapshot.at).total_seconds()
+    return EnginePnL(
+        realized=snapshot.realized,
+        unrealized=snapshot.unrealized,
+        total=snapshot.total,
+        age_seconds=max(0.0, age),
+    )

@@ -12,6 +12,7 @@ from pydantic import BaseModel, ValidationError
 
 from algo_trading.config.settings import EDITABLE_FIELDS, Settings, get_settings, save_overrides
 from algo_trading.dashboard.state_bridge import StateBridge
+from algo_trading.observability.logging import get_logger
 from app.config import WebSettings, get_web_settings
 from app.deps import get_bridge, get_engine_settings
 from app.schemas import (
@@ -31,6 +32,8 @@ from app.schemas import (
     trades_out,
 )
 from app.security import create_token, require_auth, verify_password
+
+log = get_logger("api.routes")
 
 # --- Auth (public) -------------------------------------------------------------------
 
@@ -163,15 +166,21 @@ def put_config(body: ConfigIn) -> dict[str, Any]:
 
 
 def build_stream_payload() -> dict[str, Any]:
-    """Assemble one live-stream snapshot (state + P&L + today's-underlying chain). Pure/testable."""
+    """Assemble one live-stream snapshot. Pure/testable.
+
+    Carries everything that changes intraday — state, P&L, open positions, broker P&L, and the
+    chain — so the dashboard never has to fall back on a one-shot fetch that then sits stale.
+    """
     settings = get_settings(reload=True)
-    bridge = StateBridge(settings)
+    bridge = get_bridge()
     state = bridge.read_state()
     active = settings.active_underlying_for_today()
     u = active.value if active else None
     return {
         "state": state_out(settings, state).model_dump(),
         "pnl": pnl_out(state).model_dump(),
+        "positions": [p.model_dump() for p in positions_out(state)],
+        "broker_pnl": broker_pnl_out(bridge.broker_positions()).model_dump(),
         "chain": _chain_out_with_trends(bridge, settings, u).model_dump(),
     }
 
@@ -180,7 +189,14 @@ def build_stream_payload() -> dict[str, Any]:
 async def stream(web: WebSettings = Depends(get_web_settings)):
     async def gen():
         while True:
-            yield f"data: {json.dumps(build_stream_payload())}\n\n"
+            # A transient database error must not tear down the stream — the client would show a
+            # disconnected dashboard until it reconnected. Skip the frame and try again next tick.
+            try:
+                payload = json.dumps(build_stream_payload())
+            except Exception:  # noqa: BLE001
+                log.exception("stream_payload_failed")
+            else:
+                yield f"data: {payload}\n\n"
             await asyncio.sleep(web.stream_interval_seconds)
 
     return StreamingResponse(gen(), media_type="text/event-stream",

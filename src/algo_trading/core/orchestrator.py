@@ -239,6 +239,26 @@ class Orchestrator:
             return self._writer.flush()
         return 0
 
+    def write_pnl_snapshot(self) -> int:
+        """Publish current P&L and the open positions' prices for the dashboard process.
+
+        The dashboard has no broker session: it rebuilds positions by replaying the day's trades,
+        which leaves every position marked at its own fill price and unrealized P&L stuck at zero.
+        Publishing the prices behind our own numbers is what lets it mark them properly.
+
+        Only open positions' tokens are published — the rest of the chain feed is of no use to the
+        dashboard's P&L and its history is already in ``option_chain_snapshots``. Returns the
+        number of quotes written.
+        """
+        positions = self._positions.open_positions()
+        self._repo.record_pnl(self._positions.realized_pnl(), self._positions.unrealized_pnl())
+        quotes = {
+            token: self._ltp[token]
+            for token in (p.instrument.instrument_token for p in positions)
+            if token in self._ltp
+        }
+        return self._repo.upsert_live_quotes(quotes)
+
     @property
     def is_oi_mode(self) -> bool:
         return self._oi_mode

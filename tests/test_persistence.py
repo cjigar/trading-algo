@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from sqlmodel import Session, select
 
 from algo_trading.domain.enums import AlgoState, OrderState, Side
 from algo_trading.domain.models import OrderEvent, Trade
-from algo_trading.persistence.db import AuditEventRow, OrderEventRow
+from algo_trading.persistence.db import AuditEventRow, LiveQuoteRow, OrderEventRow
 from algo_trading.persistence.repositories import Repository
 from tests.conftest import make_instrument, make_order_request
 
@@ -75,6 +75,52 @@ def test_pnl_snapshot_roundtrip(repo: Repository):
     repo.record_pnl(Decimal("100"), Decimal("-40"))
     repo.record_pnl(Decimal("120"), Decimal("30"))
     assert repo.latest_pnl() == Decimal("150")
+
+
+def test_latest_pnl_snapshot_carries_components_and_time(repo: Repository):
+    repo.record_pnl(Decimal("120"), Decimal("30"))
+    snap = repo.latest_pnl_snapshot()
+    assert snap is not None
+    # The dashboard shows realized and unrealized separately, so the split has to survive the trip.
+    assert (snap.realized, snap.unrealized, snap.total) == (
+        Decimal("120"), Decimal("30"), Decimal("150"),
+    )
+    # Freshness is what tells the UI the loop is alive; a just-written snapshot must read as new.
+    assert (datetime.utcnow() - snap.at).total_seconds() < 60
+
+
+def test_latest_pnl_snapshot_is_none_before_the_loop_reports(repo: Repository):
+    assert repo.latest_pnl_snapshot() is None
+
+
+def test_live_quotes_upsert_replaces_previous_price(repo: Repository):
+    repo.upsert_live_quotes({"11536": Decimal("100.5"), "11537": Decimal("80")})
+    repo.upsert_live_quotes({"11536": Decimal("101.25")})
+    # One row per token: the newer price replaces the old rather than accumulating.
+    assert repo.live_quotes() == {"11536": Decimal("101.25"), "11537": Decimal("80")}
+
+
+def test_live_quotes_filters_to_requested_tokens(repo: Repository):
+    repo.upsert_live_quotes({"11536": Decimal("100"), "11537": Decimal("80")})
+    assert repo.live_quotes(["11537"]) == {"11537": Decimal("80")}
+    # An explicitly empty token list means "nothing to mark", not "everything".
+    assert repo.live_quotes([]) == {}
+
+
+def test_live_quotes_drops_readings_older_than_max_age(repo: Repository, engine):
+    repo.upsert_live_quotes({"11536": Decimal("100")})
+    # Backdate the reading: a feed that died must not keep marking positions at its last price.
+    with Session(engine) as s:
+        row = s.exec(select(LiveQuoteRow)).one()
+        row.timestamp = datetime.utcnow() - timedelta(seconds=300)
+        s.add(row)
+        s.commit()
+    assert repo.live_quotes(max_age_seconds=60) == {}
+    assert repo.live_quotes(max_age_seconds=600) == {"11536": Decimal("100")}
+
+
+def test_upsert_live_quotes_ignores_an_empty_batch(repo: Repository):
+    assert repo.upsert_live_quotes({}) == 0
 
 
 def test_audit_is_append_only(repo: Repository, engine):

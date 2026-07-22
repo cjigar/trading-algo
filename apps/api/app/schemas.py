@@ -28,14 +28,27 @@ class SymbolPnLOut(BaseModel):
     realized_pnl: float
 
 
+class EnginePnLOut(BaseModel):
+    """The trading loop's own last P&L reading. ``age_seconds`` is how long ago it published;
+    a growing age means the loop is not reporting, whatever the other numbers say."""
+
+    realized: float
+    unrealized: float
+    total: float
+    age_seconds: float
+
+
 class PnLOut(BaseModel):
     total_realized: float
+    total_unrealized: float  # open positions marked at the loop's published prices
+    day_pnl: float  # realized + unrealized
     total_buy_value: float
     total_sell_value: float
     trade_count: int
     matched_symbols: int
     open_symbols: int
     per_symbol: list[SymbolPnLOut]
+    engine: EnginePnLOut | None = None
 
 
 class PositionOut(BaseModel):
@@ -110,8 +123,14 @@ def state_out(settings: Settings, s: DashboardState) -> StateOut:
 
 def pnl_out(s: DashboardState) -> PnLOut:
     fs = summarize_fills(s.trades)
+    e = s.engine_pnl
     return PnLOut(
-        total_realized=float(fs.total_realized), total_buy_value=float(fs.total_buy_value),
+        total_realized=float(fs.total_realized),
+        total_unrealized=float(s.unrealized_pnl),
+        day_pnl=float(fs.total_realized) + float(s.unrealized_pnl),
+        engine=EnginePnLOut(realized=float(e.realized), unrealized=float(e.unrealized),
+                            total=float(e.total), age_seconds=e.age_seconds) if e else None,
+        total_buy_value=float(fs.total_buy_value),
         total_sell_value=float(fs.total_sell_value), trade_count=fs.trade_count,
         matched_symbols=fs.matched_symbols, open_symbols=fs.open_symbols,
         per_symbol=[SymbolPnLOut(symbol=r.symbol, buy_qty=r.buy_qty, sell_qty=r.sell_qty,
