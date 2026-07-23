@@ -334,6 +334,37 @@ class Repository:
                 row.oi = known_oi.get(row.instrument_token)
         return rows
 
+    def latest_vwap_for(
+        self, tokens: list[str], trading_day: date | None = None
+    ) -> dict[str, Decimal]:
+        """Newest non-NULL session VWAP per requested instrument token for the day.
+
+        The dashboard marks each open broker position's VWAP the same way it marks LTP from
+        ``live_quotes`` — but VWAP lives on ``option_chain_snapshots`` (persisted per option tick).
+        A token with no VWAP row (outside the captured chain window) is omitted, so the caller
+        renders it as unknown rather than zero.
+        """
+        toks = [str(t) for t in tokens if t]
+        if not toks:
+            return {}
+        day = _today_str(trading_day)
+        stmt = (
+            select(OptionChainSnapshotRow)
+            .where(OptionChainSnapshotRow.trading_day == day)
+            .where(col(OptionChainSnapshotRow.instrument_token).in_(toks))
+            .where(col(OptionChainSnapshotRow.vwap).is_not(None))
+            .distinct(col(OptionChainSnapshotRow.instrument_token))
+            .order_by(
+                col(OptionChainSnapshotRow.instrument_token),
+                col(OptionChainSnapshotRow.timestamp).desc(),
+                col(OptionChainSnapshotRow.id).desc(),
+            )
+        )
+        with Session(self._engine) as session:
+            return {
+                r.instrument_token: _safe_decimal(r.vwap) for r in session.exec(stmt)
+            }
+
     @staticmethod
     def _distinct_per_token(
         day: str, underlying: str | None, *, newest: bool, with_oi_only: bool = False

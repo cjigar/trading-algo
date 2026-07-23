@@ -182,3 +182,25 @@ def test_control_command_queue_consumes_once(repo: Repository):
     assert [c.command for c in first] == ["stop", "flatten"]
     # Already consumed -> nothing returned on a second poll.
     assert repo.pop_pending_commands() == []
+
+
+def test_latest_vwap_for_returns_newest_nonnull_per_token(repo: Repository):
+    base = {"underlying": "NIFTY", "strike": "23000", "option_type": "CE", "volume": 10}
+    repo.write_chain_snapshots([
+        {**base, "instrument_token": "T1", "oi": 1000, "ltp": "100", "vwap": "98.0",
+         "timestamp": datetime(2025, 1, 15, 10, 0)},
+    ])
+    repo.write_chain_snapshots([
+        {**base, "instrument_token": "T1", "oi": 1000, "ltp": "101", "vwap": "99.5",
+         "timestamp": datetime(2025, 1, 15, 10, 5)},  # newer
+    ])
+    repo.write_chain_snapshots([
+        {**base, "instrument_token": "T2", "oi": 1000, "ltp": "50",  # no vwap key -> NULL
+         "timestamp": datetime(2025, 1, 15, 10, 0)},
+    ])
+    got = repo.latest_vwap_for(["T1", "T2", "T3"])
+    assert got == {"T1": Decimal("99.5")}  # T1 newest non-null; T2 null-only omitted; T3 absent
+
+
+def test_latest_vwap_for_empty_tokens_is_empty(repo: Repository):
+    assert repo.latest_vwap_for([]) == {}
