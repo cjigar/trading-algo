@@ -234,6 +234,7 @@ def test_broker_positions_open_without_quote_is_pending():
 
 def test_summarize_chain_maps_vwap_per_side():
     from types import SimpleNamespace
+
     from algo_trading.reporting import summarize_chain
 
     rows = [
