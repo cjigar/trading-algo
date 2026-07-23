@@ -217,6 +217,7 @@ class OptionChainSnapshotRow(SQLModel, table=True):
     oi: int | None = None
     ltp: str = "0"
     volume: int | None = None
+    vwap: str | None = None  # session VWAP for this option (serialized Decimal); None until first tick
 
 
 class BrokerOrderRow(SQLModel, table=True):

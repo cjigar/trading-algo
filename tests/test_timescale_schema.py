@@ -96,6 +96,20 @@ def test_changed_policy_interval_is_updated_not_duplicated(fresh_db):
         engine.dispose()
 
 
+def test_vwap_column_added_idempotently(fresh_db):
+    engine = create_engine_from_url(fresh_db, settings=SchemaTuning())
+    try:
+        with engine.connect() as conn:
+            has = conn.execute(text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'option_chain_snapshots' AND column_name = 'vwap'"
+            )).first()
+            assert has is not None
+        bootstrap_schema(engine, settings=SchemaTuning())  # second run must be a no-op
+    finally:
+        engine.dispose()
+
+
 # --- conversion of a pre-existing (SQLite-era) table -----------------------------------
 
 

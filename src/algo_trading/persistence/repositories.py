@@ -303,6 +303,7 @@ class Repository:
                         oi=r.get("oi"),
                         ltp=str(r.get("ltp", "0")),
                         volume=r.get("volume"),
+                        vwap=r.get("vwap"),
                         timestamp=r.get("timestamp") or datetime.utcnow(),
                     )
                 )
