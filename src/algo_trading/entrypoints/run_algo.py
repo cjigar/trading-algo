@@ -94,6 +94,13 @@ def main() -> None:
     # Attach the live Kotak websocket feeds (no-op in paper mode without an authenticated client).
     orch.attach_live_feeds()
 
+    # Two-way Telegram control (/clear -> flatten, /stop -> stop). No-op unless explicitly enabled;
+    # honours only the operator's chat id. Enqueues the same control commands the dashboard buttons
+    # do, which the loop consumes via process_control_commands().
+    from algo_trading.observability import telegram_commands
+
+    telegram_commands.start_listener(settings, on_command=orch.repo.enqueue_command)
+
     def _on_market_open() -> None:
         # Cron fires Mon-Fri; skip holidays (and a same-day HALTED is respected by start_session).
         if in_trading_window(datetime.now(UTC), settings):

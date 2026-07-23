@@ -96,6 +96,9 @@ class Settings(BaseSettings):
     # --- Telegram alerting (bot token is a secret in env: TELEGRAM_BOT_TOKEN, never here) ---
     alerts_enabled: bool = False
     telegram_chat_id: str = ""  # numeric chat id to send to (not a secret)
+    # Two-way control (/clear, /stop) via Telegram — a SEPARATE opt-in from alerting so enabling
+    # notifications never silently enables remote control of a live account.
+    telegram_commands_enabled: bool = False
     alert_trade_fills: bool = True  # include the per-fill trade tape (noisier)
     alert_throttle_seconds: int = 300  # collapse repeats of the same alert within this window
     alert_rate_limit_per_min: int = 20  # global cap; excess is coalesced into a "+N more" summary
