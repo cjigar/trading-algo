@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 
+from algo_trading.analytics.greeks import Greeks
 from algo_trading.domain.enums import Side
 from algo_trading.domain.models import Trade
 
@@ -74,6 +75,18 @@ def oi_trend(current_oi: int, anchor_oi: int | None, flat_threshold: int = 0) ->
     return OiTrend(TREND_UP if delta > 0 else TREND_DOWN, delta)
 
 
+def _greeks_from_row(r) -> Greeks | None:
+    """Build Greeks from a snapshot row's string columns; None when IV is absent/unparseable."""
+    iv = getattr(r, "iv", None)
+    if iv is None:
+        return None
+    try:
+        return Greeks(iv=float(iv), delta=float(r.delta), gamma=float(r.gamma),
+                      theta=float(r.theta), vega=float(r.vega))
+    except (TypeError, ValueError):
+        return None
+
+
 def _trends_for_token(
     current_oi: int,
     token: str,
@@ -106,6 +119,8 @@ class ChainStrike:
     pe_oi_trends: dict[int, OiTrend] = field(default_factory=dict)
     ce_vwap: Decimal | None = None
     pe_vwap: Decimal | None = None
+    ce_greeks: Greeks | None = None
+    pe_greeks: Greeks | None = None
 
 
 @dataclass(frozen=True)
@@ -146,8 +161,8 @@ def summarize_chain(
     baseline = oi_baseline or {}
     anchors = oi_anchors or {}
     windows = trend_windows or []
-    # value tuple: (oi, ltp, chg_oi, token, vwap)
-    by_strike: dict[Decimal, dict[str, tuple[int, Decimal, int, str, Decimal | None]]] = {}
+    # value tuple: (oi, ltp, chg_oi, token, vwap, greeks)
+    by_strike: dict[Decimal, dict[str, tuple[int, Decimal, int, str, Decimal | None, Greeks | None]]] = {}
     for r in rows:
         try:
             strike = Decimal(str(r.strike))
@@ -159,13 +174,15 @@ def summarize_chain(
         chg = oi - baseline.get(token, oi)  # 0 when this token has no day-open baseline
         raw_vwap = getattr(r, "vwap", None)
         vwap = _to_decimal(raw_vwap) if raw_vwap is not None else None
-        by_strike.setdefault(strike, {})[str(r.option_type).upper()] = (oi, ltp, chg, token, vwap)
+        by_strike.setdefault(strike, {})[str(r.option_type).upper()] = (
+            oi, ltp, chg, token, vwap, _greeks_from_row(r)
+        )
 
     per_strike: list[ChainStrike] = []
     ce_total = pe_total = 0
     for strike in sorted(by_strike):
-        ce = by_strike[strike].get("CE", (0, Decimal(0), 0, "", None))
-        pe = by_strike[strike].get("PE", (0, Decimal(0), 0, "", None))
+        ce = by_strike[strike].get("CE", (0, Decimal(0), 0, "", None, None))
+        pe = by_strike[strike].get("PE", (0, Decimal(0), 0, "", None, None))
         ce_total += ce[0]
         pe_total += pe[0]
         per_strike.append(ChainStrike(
@@ -174,6 +191,7 @@ def summarize_chain(
             ce_oi_trends=_trends_for_token(ce[0], ce[3], anchors, windows, flat_threshold),
             pe_oi_trends=_trends_for_token(pe[0], pe[3], anchors, windows, flat_threshold),
             ce_vwap=ce[4], pe_vwap=pe[4],
+            ce_greeks=ce[5], pe_greeks=pe[5],
         ))
 
     atm = _resolve_atm(per_strike)
