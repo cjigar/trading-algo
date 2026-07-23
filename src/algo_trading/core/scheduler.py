@@ -83,32 +83,26 @@ class MarketScheduler:
 
         s = self._settings
         sched = BackgroundScheduler(timezone=IST)
-        sched.add_job(
-            self._safe(self._on_premarket_login, "premarket_login"),
-            CronTrigger(hour=s.premarket_login_time.hour, minute=s.premarket_login_time.minute,
-                        day_of_week="mon-fri"),
-            id="premarket_login",
-        )
-        sched.add_job(
-            self._safe(self._on_market_open, "market_open"),
-            CronTrigger(hour=s.market_open.hour, minute=s.market_open.minute,
-                        day_of_week="mon-fri"),
-            id="market_open",
-        )
-        sched.add_job(
-            self._safe(self._on_squareoff, "squareoff"),
-            CronTrigger(hour=s.squareoff_time.hour, minute=s.squareoff_time.minute,
-                        day_of_week="mon-fri"),
-            id="squareoff",
-        )
-        sched.add_job(
-            self._safe(self._on_logout, "logout"),
-            CronTrigger(hour=s.market_close.hour, minute=s.market_close.minute,
-                        day_of_week="mon-fri"),
-            id="logout",
-        )
+        # Every CronTrigger takes timezone=IST EXPLICITLY. APScheduler does NOT propagate the
+        # scheduler's timezone to a trigger built without its own — such a trigger captures the
+        # process's local zone at construction (UTC in the container), so the jobs would fire
+        # 5h30 late (square-off at 20:45 IST, pre-market re-login mid-session). Passing the tz on
+        # the trigger is the only reliable fix here (pytz and the scheduler-level tz both failed).
+        for job_id, when, fn in (
+            ("premarket_login", s.premarket_login_time, self._on_premarket_login),
+            ("market_open", s.market_open, self._on_market_open),
+            ("squareoff", s.squareoff_time, self._on_squareoff),
+            ("logout", s.market_close, self._on_logout),
+        ):
+            sched.add_job(
+                self._safe(fn, job_id),
+                CronTrigger(hour=when.hour, minute=when.minute, day_of_week="mon-fri", timezone=IST),
+                id=job_id,
+            )
         sched.start()
         self._scheduler = sched
+        for job in sched.get_jobs():
+            log.info("scheduler_job", id=job.id, next_run=str(job.next_run_time))
         log.info("scheduler_started")
 
     def shutdown(self) -> None:  # pragma: no cover

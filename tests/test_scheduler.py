@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -96,6 +96,31 @@ def test_scheduler_registers_market_open_arm_job(settings):
     try:
         job_ids = {j.id for j in sched._scheduler.get_jobs()}
         assert {"premarket_login", "market_open", "squareoff", "logout"} <= job_ids
+    finally:
+        sched.shutdown()
+
+
+def test_scheduler_jobs_fire_in_ist_not_utc(settings):
+    """Guard against the APScheduler gotcha where a trigger without an explicit timezone
+    captures the process's local zone (UTC in the container) and fires 5h30 late. On a UTC host
+    this fails unless each CronTrigger is given timezone=IST."""
+    from algo_trading.core.scheduler import MarketScheduler
+
+    noop = lambda: None  # noqa: E731
+    sched = MarketScheduler(
+        settings, on_premarket_login=noop, on_market_open=noop,
+        on_squareoff=noop, on_logout=noop,
+    )
+    sched.start()
+    try:
+        jobs = {j.id: j for j in sched._scheduler.get_jobs()}
+        # Every job's next fire must be at IST offset (+5:30), not UTC.
+        for job_id in ("premarket_login", "market_open", "squareoff", "logout"):
+            off = jobs[job_id].next_run_time.utcoffset()
+            assert off == timedelta(hours=5, minutes=30), f"{job_id} fires at offset {off}, want IST"
+        # Square-off is 15:15 IST specifically (the safety net must land inside the session).
+        assert jobs["squareoff"].next_run_time.hour == settings.squareoff_time.hour
+        assert jobs["squareoff"].next_run_time.minute == settings.squareoff_time.minute
     finally:
         sched.shutdown()
 
