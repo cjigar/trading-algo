@@ -232,6 +232,23 @@ def test_broker_positions_open_without_quote_is_pending():
     assert s.mtm_pending_count == 1
 
 
+def test_summarize_broker_positions_attaches_vwap_by_token():
+    from decimal import Decimal
+
+    from algo_trading.reporting import summarize_broker_positions
+
+    rows = [
+        {"tok": "T1", "trdSym": "NIFTY23000CE", "flBuyQty": "0", "flSellQty": "75",
+         "buyAmt": "0", "sellAmt": "7500"},   # open short, has vwap
+        {"tok": "T2", "trdSym": "NIFTY23100PE", "flBuyQty": "75", "flSellQty": "75",
+         "buyAmt": "7000", "sellAmt": "7500"},  # squared, no vwap in map
+    ]
+    s = summarize_broker_positions(rows, quotes={"T1": Decimal("90")}, vwaps={"T1": Decimal("88.5")})
+    by_sym = {p.symbol: p for p in s.per_position}
+    assert by_sym["NIFTY23000CE"].vwap == Decimal("88.5")
+    assert by_sym["NIFTY23100PE"].vwap is None  # absent from vwaps -> None, not 0
+
+
 def test_summarize_chain_maps_vwap_per_side():
     from types import SimpleNamespace
 

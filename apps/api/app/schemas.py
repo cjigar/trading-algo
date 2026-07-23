@@ -223,6 +223,7 @@ class BrokerPositionPnLOut(BaseModel):
     total_pnl: float  # live M2M for this position (realized + unrealized at ltp)
     ltp: float | None = None  # price the open net qty is marked at (null if unpriced)
     mtm_pending: bool = False  # open position awaiting a live quote
+    vwap: float | None = None  # session VWAP for the position's option (null if unavailable)
 
 
 class BrokerPnLOut(BaseModel):
@@ -233,8 +234,9 @@ class BrokerPnLOut(BaseModel):
     per_position: list[BrokerPositionPnLOut]
 
 
-def broker_pnl_out(rows: list[dict], quotes: dict[str, Decimal] | None = None) -> BrokerPnLOut:
-    s = summarize_broker_positions(rows, quotes)
+def broker_pnl_out(rows: list[dict], quotes: dict[str, Decimal] | None = None,
+                   vwaps: dict[str, Decimal] | None = None) -> BrokerPnLOut:
+    s = summarize_broker_positions(rows, quotes, vwaps)
     return BrokerPnLOut(
         total_realized=float(s.total_realized), total_pnl=float(s.total_pnl),
         open_count=s.open_count, mtm_pending_count=s.mtm_pending_count,
@@ -244,6 +246,7 @@ def broker_pnl_out(rows: list[dict], quotes: dict[str, Decimal] | None = None) -
             realized_pnl=float(p.realized_pnl), is_open=p.is_open,
             total_pnl=float(p.total_pnl), ltp=float(p.ltp) if p.ltp is not None else None,
             mtm_pending=p.mtm_pending,
+            vwap=float(p.vwap) if p.vwap is not None else None,
         ) for p in s.per_position],
     )
 

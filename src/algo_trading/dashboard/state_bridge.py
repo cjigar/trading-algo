@@ -130,6 +130,13 @@ class StateBridge:
             return {}
         return self._repo.live_quotes(tokens, max_age_seconds=self._quote_max_age)
 
+    def chain_vwaps_for(self, tokens: list[str]) -> dict[str, Decimal]:
+        """Latest per-option session VWAP for the given instrument tokens (for the P&L table)."""
+        tokens = [t for t in tokens if t]
+        if not tokens:
+            return {}
+        return self._repo.latest_vwap_for(tokens)
+
     # -- Control commands (consumed by the orchestrator) -------------------------------
 
     def send_start(self) -> None:

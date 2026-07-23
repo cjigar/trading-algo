@@ -204,6 +204,7 @@ class BrokerPositionPnL:
     ltp: Decimal | None = None  # live price the open net qty is marked at (None if unpriced)
     total_pnl: Decimal = Decimal(0)  # live M2M = (sell_val - buy_val) + net*ltp (== realized if flat)
     mtm_pending: bool = False  # open but no live quote yet -> total_pnl falls back to realized
+    vwap: Decimal | None = None  # session VWAP for the position's option (None if outside chain window)
 
 
 @dataclass(frozen=True)
@@ -223,7 +224,8 @@ def _to_int(v: object) -> int:
 
 
 def summarize_broker_positions(
-    rows: list[dict], quotes: dict[str, Decimal] | None = None
+    rows: list[dict], quotes: dict[str, Decimal] | None = None,
+    vwaps: dict[str, Decimal] | None = None,
 ) -> BrokerPnLSummary:
     """Live M2M P&L per broker position, from the raw Kotak position fields (flBuyQty/flSellQty
     filled quantities, buyAmt/sellAmt rupee values, tok instrument token).
@@ -237,6 +239,7 @@ def summarize_broker_positions(
     ``mtm_pending`` rather than shown as a confident (wrong) number. ``quotes`` maps instrument
     token -> LTP (from the live feed)."""
     quotes = quotes or {}
+    vwaps = vwaps or {}
     out: list[BrokerPositionPnL] = []
     total_realized = Decimal(0)
     total_pnl = Decimal(0)
@@ -265,6 +268,7 @@ def summarize_broker_positions(
                 symbol=str(r.get("trdSym", "")), net_qty=net, buy_qty=bq, sell_qty=sq,
                 avg_buy=avg_buy, avg_sell=avg_sell, realized_pnl=realized, is_open=net != 0,
                 ltp=used_ltp, total_pnl=total, mtm_pending=mtm_pending,
+                vwap=vwaps.get(str(r.get("tok", ""))),
             )
         )
     out.sort(key=lambda p: p.total_pnl)

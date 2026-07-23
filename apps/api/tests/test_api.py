@@ -248,6 +248,22 @@ def test_broker_pnl_live_m2m(client, auth, repo):
     assert pos["total_pnl"] == 1324.0 and pos["ltp"] == 150.0 and pos["mtm_pending"] is False
 
 
+def test_broker_pnl_exposes_position_vwap(client, auth, repo):
+    from decimal import Decimal
+    tok = "OPT1"
+    repo.replace_broker_positions([
+        {"tok": tok, "trdSym": "NIFTY23000CE", "flBuyQty": "0", "flSellQty": "75",
+         "buyAmt": "0", "sellAmt": "7500"},
+    ])
+    repo.upsert_live_quotes({tok: Decimal("90")})
+    repo.write_chain_snapshots([
+        {"underlying": "NIFTY", "strike": "23000", "option_type": "CE", "instrument_token": tok,
+         "oi": 1000, "ltp": "90", "volume": 10, "vwap": "88.5"},
+    ])
+    pos = client.get("/api/broker-pnl", headers=auth).json()["per_position"][0]
+    assert pos["vwap"] == 88.5
+
+
 def test_state_spots_change_vs_previous_close(client, auth, repo):
     # Reproduces the ticker bug: day change must be vs the PREVIOUS trading day's close,
     # not the day's first-observed spot. Numbers from the real 2026-07-23 NIFTY screenshot.
