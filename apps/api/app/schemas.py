@@ -106,6 +106,16 @@ class OiTrendOut(BaseModel):
     delta: int | None = None
 
 
+class GreeksOut(BaseModel):
+    """Per-strike-side option greeks. Null when IV could not be solved."""
+
+    iv: float
+    delta: float
+    gamma: float
+    theta: float
+    vega: float
+
+
 class ChainStrikeOut(BaseModel):
     strike: float
     ce_oi: int
@@ -120,6 +130,8 @@ class ChainStrikeOut(BaseModel):
     pe_oi_trends: dict[str, OiTrendOut] = {}
     ce_vwap: float | None = None
     pe_vwap: float | None = None
+    ce_greeks: GreeksOut | None = None
+    pe_greeks: GreeksOut | None = None
 
 
 class ChainOut(BaseModel):
@@ -268,6 +280,12 @@ def _trends_out(trends: dict) -> dict[str, OiTrendOut]:
     return {f"{w}m": OiTrendOut(dir=t.direction, delta=t.delta) for w, t in trends.items()}
 
 
+def _greeks_out(g) -> GreeksOut | None:
+    if g is None:
+        return None
+    return GreeksOut(iv=g.iv, delta=g.delta, gamma=g.gamma, theta=g.theta, vega=g.vega)
+
+
 def chain_out(rows: list, underlying: str | None = None,
               oi_baseline: dict[str, int] | None = None,
               oi_anchors: dict[int, dict[str, int]] | None = None,
@@ -286,4 +304,5 @@ def chain_out(rows: list, underlying: str | None = None,
             ce_oi_trends=_trends_out(x.ce_oi_trends), pe_oi_trends=_trends_out(x.pe_oi_trends),
             ce_vwap=float(x.ce_vwap) if x.ce_vwap is not None else None,
             pe_vwap=float(x.pe_vwap) if x.pe_vwap is not None else None,
+            ce_greeks=_greeks_out(x.ce_greeks), pe_greeks=_greeks_out(x.pe_greeks),
         ) for x in cs.per_strike])
