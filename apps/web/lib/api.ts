@@ -105,6 +105,7 @@ export type BrokerPositionPnL = {
   symbol: string; net_qty: number; buy_qty: number; sell_qty: number;
   avg_buy: number; avg_sell: number; realized_pnl: number; is_open: boolean;
   total_pnl: number; ltp: number | null; mtm_pending: boolean;
+  vwap?: number | null;
 };
 export type BrokerPnL = {
   total_realized: number; total_pnl: number; open_count: number;

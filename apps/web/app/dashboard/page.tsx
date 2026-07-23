@@ -248,6 +248,7 @@ function BrokerPnLTable({ pnl }: { pnl: BrokerPnL }) {
             <th className="px-3 py-2">Net qty</th>
             <th className="px-3 py-2">Avg buy</th>
             <th className="px-3 py-2">Avg sell</th>
+            <th className="px-3 py-2">VWAP</th>
             <th className="px-3 py-2">LTP</th>
             <th className="px-3 py-2">Live P&amp;L (M2M)</th>
             <th className="px-3 py-2">Realized</th>
@@ -261,6 +262,7 @@ function BrokerPnLTable({ pnl }: { pnl: BrokerPnL }) {
               <td className="px-3 py-1.5">{p.net_qty}</td>
               <td className="px-3 py-1.5">{p.avg_buy.toFixed(2)}</td>
               <td className="px-3 py-1.5">{p.avg_sell.toFixed(2)}</td>
+              <td className="px-3 py-1.5 text-neutral-400">{p.vwap != null ? p.vwap.toFixed(2) : "—"}</td>
               <td className="px-3 py-1.5 text-neutral-300">{p.ltp != null ? p.ltp.toFixed(2) : "—"}</td>
               <td className={`px-3 py-1.5 ${p.total_pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                 ₹{p.total_pnl.toLocaleString(undefined, { maximumFractionDigits: 2 })}
