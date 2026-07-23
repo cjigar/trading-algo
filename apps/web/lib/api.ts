@@ -124,11 +124,14 @@ export type Order = {
 export type OiTrend = { dir: "up" | "down" | "flat" | "na"; delta: number | null };
 // Per-window trends keyed by window label, e.g. { "1m": {...}, "3m": {...} }.
 export type OiTrends = Record<string, OiTrend>;
+// Per-strike-side option greeks; null when IV could not be solved.
+export type Greeks = { iv: number; delta: number; gamma: number; theta: number; vega: number };
 export type ChainStrike = {
   strike: number; ce_oi: number; ce_ltp: number; ce_chg_oi: number;
   pe_oi: number; pe_ltp: number; pe_chg_oi: number; is_atm: boolean;
   ce_oi_trends?: OiTrends; pe_oi_trends?: OiTrends;
   ce_vwap?: number | null; pe_vwap?: number | null;
+  ce_greeks?: Greeks | null; pe_greeks?: Greeks | null;
 };
 export type Chain = {
   underlying: string | null; atm: number | null; ce_oi_total: number; pe_oi_total: number;

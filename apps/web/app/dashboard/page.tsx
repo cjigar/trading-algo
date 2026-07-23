@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { AccountSummary, Banner, DataTable, Metric, SpotTicker, Tabs } from "@/components/ui";
-import { api, clearToken, type BrokerPnL, type Chain, type EnginePnL, type OiTrends } from "@/lib/api";
+import { api, clearToken, type BrokerPnL, type Chain, type EnginePnL, type Greeks, type OiTrends } from "@/lib/api";
 import { fmtOi } from "@/lib/format";
 import { useStream } from "@/lib/useStream";
 
@@ -345,14 +345,23 @@ function OptionChainTable({ chain }: { chain: Chain }) {
   };
   const vwapCell = (v: number | null | undefined) =>
     v == null ? <span className="text-neutral-500">—</span> : <span>{v.toFixed(2)}</span>;
+  const greeksCell = (g?: Greeks | null) => {
+    if (!g) return <span className="text-neutral-600">—</span>;
+    const title = `IV ${(g.iv * 100).toFixed(1)}%  Δ ${g.delta.toFixed(2)}  Γ ${g.gamma.toFixed(4)}  θ ${g.theta.toFixed(2)}  ν ${g.vega.toFixed(2)}`;
+    return (
+      <span title={title} className="text-neutral-300">
+        {(g.iv * 100).toFixed(1)}% <span className="text-neutral-500">Δ{g.delta.toFixed(2)}</span>
+      </span>
+    );
+  };
   return (
     <div className="overflow-x-auto rounded-md border border-neutral-800">
       <table className="w-full text-right text-sm tabular-nums">
         <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
           <tr>
-            <th className="px-3 py-2" colSpan={5}>Calls (CE)</th>
+            <th className="px-3 py-2" colSpan={6}>Calls (CE)</th>
             <th className="px-3 py-2 text-center">Strike</th>
-            <th className="px-3 py-2 text-left" colSpan={5}>Puts (PE)</th>
+            <th className="px-3 py-2 text-left" colSpan={6}>Puts (PE)</th>
           </tr>
           <tr className="text-[10px]">
             <th className="px-3 py-1">OI Trend</th>
@@ -360,7 +369,9 @@ function OptionChainTable({ chain }: { chain: Chain }) {
             <th className="px-3 py-1">Chg OI</th>
             <th className="px-3 py-1">LTP</th>
             <th className="px-3 py-1">VWAP</th>
+            <th className="px-3 py-1">IV/Δ</th>
             <th className="px-3 py-1 text-center">{chain.atm ? `ATM ${chain.atm.toLocaleString()}` : ""}</th>
+            <th className="px-3 py-1 text-left">IV/Δ</th>
             <th className="px-3 py-1 text-left">VWAP</th>
             <th className="px-3 py-1 text-left">LTP</th>
             <th className="px-3 py-1 text-left">Chg OI</th>
@@ -379,9 +390,11 @@ function OptionChainTable({ chain }: { chain: Chain }) {
               <td className="px-3 py-1.5">{chg(r.ce_chg_oi)}</td>
               <td className="px-3 py-1.5">{ltpVsVwap(r.ce_ltp, r.ce_vwap)}</td>
               <td className="px-3 py-1.5">{vwapCell(r.ce_vwap)}</td>
+              <td className="px-3 py-1.5">{greeksCell(r.ce_greeks)}</td>
               <td className={`px-3 py-1.5 text-center font-semibold ${r.is_atm ? "text-blue-300" : "text-neutral-200"}`}>
                 {r.strike.toLocaleString()}{r.is_atm ? " •" : ""}
               </td>
+              <td className="px-3 py-1.5 text-left">{greeksCell(r.pe_greeks)}</td>
               <td className="px-3 py-1.5 text-left">{vwapCell(r.pe_vwap)}</td>
               <td className="px-3 py-1.5 text-left">{ltpVsVwap(r.pe_ltp, r.pe_vwap)}</td>
               <td className="px-3 py-1.5 text-left">{chg(r.pe_chg_oi)}</td>
