@@ -117,6 +117,7 @@ class OptionChainManager:
                     "option_type": inst.option_type.value, "instrument_token": tick.instrument_token,
                     "oi": tick.oi, "ltp": str(tick.ltp), "volume": tick.volume,
                     "vwap": str(vwap.value) if vwap.value is not None else None,
+                    "expiry": inst.expiry,
                     "timestamp": tick.timestamp,
                 }
             )

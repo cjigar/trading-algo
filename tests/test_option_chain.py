@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pandas as pd
 import pytest
 
 from algo_trading.config.settings import get_settings
-from algo_trading.domain.enums import ExchangeSegment
+from algo_trading.domain.enums import ExchangeSegment, Underlying
 from algo_trading.domain.models import Tick
 from algo_trading.feed.option_chain import OptionChainManager
 from algo_trading.instruments.option_resolver import WeeklyOptionResolver
@@ -116,3 +116,37 @@ def test_option_tick_snapshot_includes_vwap(resolver):
     assert "vwap" in captured[-1]
     assert captured[-1]["vwap"] is not None   # a tick arrived, so VWAP is set
     assert Decimal(captured[-1]["vwap"]) == Decimal("100")  # single tick -> VWAP == LTP
+
+
+class _CapturingWriter:
+    def __init__(self):
+        self.rows = []
+
+    def add(self, snapshot: dict) -> None:
+        self.rows.append(snapshot)
+
+
+def _nifty_scrip():
+    rows = []
+    for k in range(22000, 24000, 50):
+        for ot in ("CE", "PE"):
+            rows.append({"pTrdSymbol": f"NIFTY{k}{ot}", "pSymbol": f"NIFTY{k}{ot}",
+                         "pSymbolName": "NIFTY", "pExpiryDate": "2099-01-30", "dStrikePrice": k,
+                         "pOptionType": ot, "lLotSize": 75})
+    return ScripMaster.from_dataframe(pd.DataFrame(rows), ExchangeSegment.NSE_FO)
+
+
+def test_on_option_tick_stamps_expiry():
+    s = get_settings(reload=True)
+    object.__setattr__(s, "strike_window", 5)
+    object.__setattr__(s, "chain_feed_window", 5)
+    object.__setattr__(s, "strike_step", Decimal("50"))
+    writer = _CapturingWriter()
+    chain = OptionChainManager(s, WeeklyOptionResolver(_nifty_scrip()),
+                               snapshot_writer=writer, underlying=Underlying.NIFTY)
+    chain.on_index_tick(Tick(instrument_token="NIFTY-IDX", exchange_segment=ExchangeSegment.NSE_CM,
+                             ltp=Decimal("23000"), timestamp=datetime(2025, 1, 15, 10, 0, tzinfo=UTC), is_index=True))
+    chain.on_option_tick(Tick(instrument_token="NIFTY23000CE", exchange_segment=ExchangeSegment.NSE_FO,
+                              ltp=Decimal("100"), timestamp=datetime(2025, 1, 15, 10, 0, tzinfo=UTC), oi=1000, volume=50))
+    assert writer.rows, "an option tick in the window should produce a snapshot"
+    assert writer.rows[-1]["expiry"] == date(2099, 1, 30)
