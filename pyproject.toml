@@ -23,6 +23,7 @@ dependencies = [
     "apscheduler>=3.10",
     "tenacity>=8.2",
     "python-dotenv>=1.0",
+    "py_vollib>=1.0.1",
 ]
 
 [project.optional-dependencies]
