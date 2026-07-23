@@ -178,6 +178,13 @@ class Orchestrator:
         self._risk.stop_session()
         log.info("session_stopped")
 
+    def reconcile(self) -> None:
+        """Capture current broker positions/orders without arming the session.
+
+        Called at boot outside the trading window so the dashboard shows broker state pre-market
+        while the algo stays IDLE (no entries until the 09:15 market-open arm)."""
+        self._orders.reconcile()
+
     def attach_live_feeds(self) -> bool:
         """Wire the live Kotak websockets into the pipeline. No-op without an authenticated
         client (paper mode). Returns True if the live feed was started."""

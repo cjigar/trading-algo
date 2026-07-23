@@ -9,7 +9,7 @@ independent of the strategy/feed path so it fires even if that path is degraded.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime, time
+from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
 from algo_trading.config.settings import Settings
@@ -28,17 +28,39 @@ def is_after(now: datetime, when: time) -> bool:
     return now.astimezone(IST).time() >= when
 
 
+def is_trading_day(day: date, settings: Settings) -> bool:
+    """A weekday (Mon-Fri) that is not a configured market holiday."""
+    if day.weekday() >= 5:
+        return False
+    return day.isoformat() not in set(settings.market_holidays)
+
+
+def in_trading_window(now: datetime, settings: Settings) -> bool:
+    """True on a trading day while ``market_open <= t_IST < squareoff_time``.
+
+    The window ends at square-off (not market close): there is no point auto-arming for the
+    15:15-15:30 flatten-only tail, where the strategy should take no new entries. Drives both the
+    boot-time arm decision and the 09:15 ``market_open`` job's holiday guard.
+    """
+    local = now.astimezone(IST)
+    if not is_trading_day(local.date(), settings):
+        return False
+    return settings.market_open <= local.time() < settings.squareoff_time
+
+
 class MarketScheduler:
     def __init__(
         self,
         settings: Settings,
         *,
         on_premarket_login: Callable[[], None],
+        on_market_open: Callable[[], None],
         on_squareoff: Callable[[], None],
         on_logout: Callable[[], None],
     ) -> None:
         self._settings = settings
         self._on_premarket_login = on_premarket_login
+        self._on_market_open = on_market_open
         self._on_squareoff = on_squareoff
         self._on_logout = on_logout
         self._scheduler = None
@@ -54,6 +76,12 @@ class MarketScheduler:
             CronTrigger(hour=s.premarket_login_time.hour, minute=s.premarket_login_time.minute,
                         day_of_week="mon-fri"),
             id="premarket_login",
+        )
+        sched.add_job(
+            self._safe(self._on_market_open, "market_open"),
+            CronTrigger(hour=s.market_open.hour, minute=s.market_open.minute,
+                        day_of_week="mon-fri"),
+            id="market_open",
         )
         sched.add_job(
             self._safe(self._on_squareoff, "squareoff"),

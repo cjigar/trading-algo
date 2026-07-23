@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import signal
 import time
+from datetime import UTC, datetime
 
 from algo_trading.config.secrets import load_secrets
 from algo_trading.config.settings import get_settings
 from algo_trading.core.orchestrator import LiveModeNotArmedError, Orchestrator
-from algo_trading.core.scheduler import MarketScheduler
+from algo_trading.core.scheduler import MarketScheduler, in_trading_window
 from algo_trading.domain.enums import TradingMode
 from algo_trading.instruments.loader import load_scrip_master
 from algo_trading.observability.logging import configure_logging, get_logger
@@ -54,14 +55,36 @@ def main() -> None:
     log.info("starting", mode=settings.mode.value, live_armed=settings.live_armed)
 
     orch = build_orchestrator()
-    orch.start_session()
+    # The daily lifecycle is automatic: arm only inside the trading window (weekday, not a holiday,
+    # 09:15-15:15 IST). A boot/redeploy mid-session resumes trading; outside the window we still
+    # reconcile broker state for the dashboard but stay IDLE until the 09:15 market-open job arms.
+    # start_session() itself refuses to override a persisted HALTED (manual stop / kill-switch).
+    if in_trading_window(datetime.now(UTC), settings):
+        orch.start_session()
+        log.info("boot_armed", reason="inside trading window")
+    else:
+        orch.reconcile()
+        log.info("boot_idle", reason="outside trading window; awaiting market_open")
     # Attach the live Kotak websocket feeds (no-op in paper mode without an authenticated client).
     orch.attach_live_feeds()
+
+    def _on_market_open() -> None:
+        # Cron fires Mon-Fri; skip holidays (and a same-day HALTED is respected by start_session).
+        if in_trading_window(datetime.now(UTC), settings):
+            orch.start_session()
+        else:
+            log.info("market_open_skipped", reason="not a trading day")
+
+    def _on_squareoff() -> None:
+        # Flatten and also block new entries through the 15:15-15:30 tail.
+        orch.square_off_all("scheduled square-off")
+        orch.stop_session()
 
     scheduler = MarketScheduler(
         settings,
         on_premarket_login=lambda: log.info("premarket_login_tick"),
-        on_squareoff=lambda: orch.square_off_all("scheduled square-off"),
+        on_market_open=_on_market_open,
+        on_squareoff=_on_squareoff,
         on_logout=lambda: orch.stop_session(),
     )
     scheduler.start()

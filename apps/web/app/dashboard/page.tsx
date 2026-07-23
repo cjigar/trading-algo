@@ -40,8 +40,8 @@ export default function Dashboard() {
     return () => clearInterval(id);
   }, [refresh]);
 
-  async function control(cmd: "start" | "stop" | "flatten") {
-    if (cmd !== "start" && !confirm(`Confirm ${cmd.toUpperCase()}?`)) return;
+  async function control(cmd: "stop" | "flatten") {
+    if (!confirm(`Confirm ${cmd.toUpperCase()}?`)) return;
     await api.control(cmd);
   }
 
@@ -80,7 +80,7 @@ export default function Dashboard() {
       {state && <Banner mode={state.mode} liveArmed={state.live_armed} algoState={state.algo_state} strategy={state.strategy} />}
 
       <div className="flex items-center gap-2">
-        <button onClick={() => control("start")} className="rounded-md bg-emerald-700 px-3 py-2 text-sm hover:bg-emerald-600">▶ Start</button>
+        <span className="mr-1 text-xs text-neutral-500">Auto 9:15–15:30 IST</span>
         <button onClick={() => control("stop")} className="rounded-md bg-red-800 px-3 py-2 text-sm hover:bg-red-700">⏹ Stop</button>
         <button onClick={() => control("flatten")} className="rounded-md bg-neutral-700 px-3 py-2 text-sm hover:bg-neutral-600">🧹 Flatten</button>
         <span className="ml-auto text-xs text-neutral-500">{connected ? "● live" : "○ offline"}</span>
