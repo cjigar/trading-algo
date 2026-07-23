@@ -106,6 +106,12 @@ def test_vwap_column_added_idempotently(fresh_db):
             )).first()
             assert has is not None
         bootstrap_schema(engine, settings=SchemaTuning())  # second run must be a no-op
+        with engine.connect() as conn:
+            count = conn.execute(text(
+                "SELECT count(*) FROM information_schema.columns WHERE table_name = "
+                "'option_chain_snapshots' AND column_name = 'vwap'"
+            )).scalar()
+        assert count == 1
     finally:
         engine.dispose()
 
@@ -163,6 +169,10 @@ def test_populated_legacy_table_is_converted_without_losing_rows(fresh_db):
                     "WHERE hypertable_name = 'option_chain_snapshots'"
                 )
             ).first() is not None
+            assert conn.execute(text(
+                "SELECT 1 FROM information_schema.columns WHERE table_name = "
+                "'option_chain_snapshots' AND column_name = 'vwap'"
+            )).first() is not None
     finally:
         engine.dispose()
 
