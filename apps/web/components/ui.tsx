@@ -2,6 +2,34 @@
 
 import type { ReactNode } from "react";
 
+import type { IndexSpot } from "@/lib/api";
+
+// Sticky bar of live index spot rates (NIFTY/SENSEX), shown across every tab. Each chip carries
+// the spot LTP and the day's change (points + %), green up / red down, dimmed when the reading is
+// stale (the feed stopped publishing). Renders nothing until at least one spot has arrived.
+export function SpotTicker({ spots }: { spots: IndexSpot[] }) {
+  if (!spots || spots.length === 0) return null;
+  const fmt = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return (
+    <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b border-neutral-800 bg-neutral-950/95 px-4 py-2 backdrop-blur">
+      {spots.map((s) => {
+        const up = s.change >= 0;
+        const tone = s.stale ? "text-neutral-500" : up ? "text-emerald-400" : "text-red-400";
+        return (
+          <div key={s.underlying} className={`flex items-baseline gap-2 ${s.stale ? "opacity-60" : ""}`}>
+            <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400">{s.underlying}</span>
+            <span className="text-lg font-semibold tabular-nums">{fmt(s.ltp)}</span>
+            <span className={`text-sm tabular-nums ${tone}`}>
+              {up ? "▲" : "▼"} {fmt(Math.abs(s.change))} ({up ? "+" : "-"}{Math.abs(s.change_pct).toFixed(2)}%)
+            </span>
+            {s.stale && <span className="text-[10px] uppercase text-neutral-500">stale</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function Banner(
   { mode, liveArmed, algoState, strategy }:
   { mode: string; liveArmed: boolean; algoState: string; strategy?: string },

@@ -127,6 +127,25 @@ class LiveQuoteRow(SQLModel, table=True):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
+class IndexSpotRow(SQLModel, table=True):
+    """Live index spot per underlying for the dashboard's rate ticker, one row per underlying
+    per trading day.
+
+    ``day_open`` is the day's FIRST observed spot and is written once (kept on conflict), so the
+    ticker's day-change survives a mid-session process re-exec — an in-memory "first tick" would
+    reset to a mid-session price after a hard-recover restart. ``ltp``/``updated_at`` are upserted
+    each cycle. Like :class:`LiveQuoteRow` this is mutable point-in-time state, not a time series.
+    """
+
+    __tablename__ = "index_spots"
+
+    trading_day: str = Field(primary_key=True)
+    underlying: str = Field(primary_key=True)
+    day_open: str = "0"
+    ltp: str = "0"
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class AuditEventRow(SQLModel, table=True):
     """Append-only audit trail (kill-switch, manual halt, login, reconciliation, etc.)."""
 
@@ -230,6 +249,20 @@ class BrokerPositionRow(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     trading_day: str = Field(index=True)
     raw: str = "{}"  # JSON-encoded raw broker position dict
+    captured_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class BrokerTradeRow(SQLModel, table=True):
+    """A snapshot of the broker's trade report (executions in the account), kept as raw JSON and
+    replaced wholesale on each poll — the trade report is a point-in-time full snapshot. Deliberately
+    a SEPARATE table from ``trades`` (which the algo-session P&L replay reads) so polling the broker
+    account never double-counts the algo's own fills."""
+
+    __tablename__ = "broker_trades"
+
+    id: int | None = Field(default=None, primary_key=True)
+    trading_day: str = Field(index=True)
+    raw: str = "{}"  # JSON-encoded raw broker trade dict
     captured_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 

@@ -266,6 +266,56 @@ class Orchestrator:
         }
         return self._repo.upsert_live_quotes(quotes)
 
+    def write_index_spots(self) -> int:
+        """Publish the current index spot per underlying for the dashboard rate ticker.
+
+        Uses the same live LTP the feed already stores in ``self._ltp``; both index feeds are
+        subscribed, so NIFTY and SENSEX are published regardless of which trades today. Returns
+        the number of underlyings written.
+        """
+        spots = {
+            underlying.value: self._ltp[token]
+            for token, underlying in self._underlying_token.items()
+            if token in self._ltp
+        }
+        return self._repo.upsert_index_spots(spots)
+
+    def refresh_broker_account(self) -> dict:
+        """Poll the broker account (positions, orders, trades) and persist it for the dashboard.
+
+        Read-only: never places/modifies orders and never arms the session. Each broker read and
+        each persist is independently fail-safe so a single failing endpoint (or a transient broker
+        error) still lets the others refresh — a stale panel beats a dead loop. In paper mode the
+        broker returns its own book / empty reports, so this is a harmless no-op. Returns a summary.
+        """
+        from algo_trading.broker.report_normalize import normalize_order_row
+
+        summary = {"positions": 0, "orders": 0, "trades": 0}
+
+        try:
+            positions = self._broker.positions()
+            summary["positions"] = self._repo.replace_broker_positions(positions)
+        except Exception:  # noqa: BLE001 - a broker/persist failure must not stall the poller
+            log.exception("broker_positions_refresh_failed")
+
+        try:
+            report = self._broker.order_report()
+            for raw in report:
+                fields = normalize_order_row(raw)
+                if fields is not None:
+                    self._repo.record_broker_order(fields)
+            summary["orders"] = len(report)
+        except Exception:  # noqa: BLE001
+            log.exception("broker_orders_refresh_failed")
+
+        try:
+            trades = self._broker.trade_report()
+            summary["trades"] = self._repo.replace_broker_trades(trades)
+        except Exception:  # noqa: BLE001
+            log.exception("broker_trades_refresh_failed")
+
+        return summary
+
     @property
     def is_oi_mode(self) -> bool:
         return self._oi_mode

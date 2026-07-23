@@ -76,9 +76,14 @@ export const api = {
 
 // Minimal hand-written types mirroring the API response models. `pnpm gen:types` can regenerate
 // a full set from the OpenAPI schema into lib/api-types.ts.
+export type IndexSpot = {
+  underlying: string; ltp: number; day_open: number;
+  change: number; change_pct: number; age_seconds: number; stale: boolean;
+};
 export type AlgoState = {
   mode: string; live_armed: boolean; algo_state: string; strategy: string;
   active_underlying: string | null; oi_underlyings: string[];
+  spots: IndexSpot[];
 };
 export type SymbolPnL = {
   symbol: string; buy_qty: number; sell_qty: number; avg_buy: number; avg_sell: number;
@@ -123,5 +128,7 @@ export type Chain = {
   selected_side: string; per_strike: ChainStrike[];
 };
 export type StreamPayload = {
-  state: AlgoState; pnl: PnL; positions: Position[]; broker_pnl: BrokerPnL; chain: Chain;
+  state: AlgoState; pnl: PnL; positions: Position[]; orders: Order[];
+  broker_pnl: BrokerPnL; broker_positions: Record<string, unknown>[]; broker_trades: Trade[];
+  chain: Chain;
 };

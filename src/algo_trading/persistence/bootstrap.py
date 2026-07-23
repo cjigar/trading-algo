@@ -58,6 +58,7 @@ def bootstrap_schema(engine: Engine, *, settings=None, retries: int = 1) -> None
 
     _with_retry(engine, retries, lambda conn: _install_extension(conn))
     SQLModel.metadata.create_all(engine)
+    _ensure_declared_indexes(engine)
 
     with _autocommit(engine) as conn:
         for table, time_column in HYPERTABLES.items():
@@ -107,6 +108,22 @@ def has_chain_aggregate(engine: Engine) -> bool:
 
 
 # --- steps ---------------------------------------------------------------------------
+
+
+def _ensure_declared_indexes(engine: Engine) -> None:
+    """Create model-declared indexes that ``create_all`` skipped on pre-existing tables.
+
+    ``metadata.create_all`` only emits DDL for tables it actually creates; a table that already
+    exists is left untouched, so an index added to a model *after* its table was first created
+    (e.g. the composite ``ix_chain_snap_token_day_ts`` on the already-live snapshot table) never
+    lands. Re-issue every declared index with ``checkfirst`` so bootstrap self-heals on the next
+    start. On a hypertable a plain ``CREATE INDEX`` briefly locks while it propagates to chunks;
+    bootstrap runs at startup (out of market hours per the deploy policy) and this fires only when
+    an index is genuinely missing, so the one-time cost is acceptable.
+    """
+    for table in SQLModel.metadata.tables.values():
+        for index in table.indexes:
+            index.create(bind=engine, checkfirst=True)
 
 
 def _install_extension(conn: Connection) -> None:

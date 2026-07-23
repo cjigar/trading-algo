@@ -25,7 +25,9 @@ from algo_trading.persistence.db import (
     AuditEventRow,
     BrokerOrderRow,
     BrokerPositionRow,
+    BrokerTradeRow,
     ControlCommandRow,
+    IndexSpotRow,
     LiveQuoteRow,
     OptionChainSnapshotRow,
     OrderEventRow,
@@ -251,6 +253,30 @@ class Repository:
         """The most recently captured broker positions as raw dicts (empty if none captured)."""
         with Session(self._engine) as session:
             rows = list(session.exec(select(BrokerPositionRow).order_by(col(BrokerPositionRow.id))))
+        out: list[dict] = []
+        for row in rows:
+            try:
+                out.append(json.loads(row.raw))
+            except (json.JSONDecodeError, TypeError):
+                continue
+        return out
+
+    def replace_broker_trades(self, trades: list[dict], trading_day: date | None = None) -> int:
+        """Replace the stored broker trade-report snapshot with the current set (raw broker dicts).
+        The trade report is a full point-in-time snapshot, so we clear and re-insert. Kept apart from
+        the ``trades`` table so the algo-session replay is never double-counted."""
+        day = _today_str(trading_day)
+        with Session(self._engine) as session:
+            session.exec(delete(BrokerTradeRow))
+            for t in trades:
+                session.add(BrokerTradeRow(trading_day=day, raw=json.dumps(t, default=str)))
+            session.commit()
+        return len(trades)
+
+    def latest_broker_trades(self) -> list[dict]:
+        """The most recently captured broker trades as raw dicts (empty if none captured)."""
+        with Session(self._engine) as session:
+            rows = list(session.exec(select(BrokerTradeRow).order_by(col(BrokerTradeRow.id))))
         out: list[dict] = []
         for row in rows:
             try:
@@ -560,6 +586,41 @@ class Repository:
             stmt = stmt.where(col(LiveQuoteRow.timestamp) >= cutoff)
         with Session(self._engine) as session:
             return {r.instrument_token: _safe_decimal(r.ltp) for r in session.exec(stmt)}
+
+    # -- Index spots (latest spot + day-open per underlying, for the rate ticker) ---------
+
+    def upsert_index_spots(
+        self, spots: dict[str, Decimal], trading_day: date | None = None
+    ) -> int:
+        """Publish the current index spot per underlying. ``ltp``/``updated_at`` are replaced each
+        call; ``day_open`` is written only on the first insert of the day (kept on conflict), so it
+        is the day's true first price and survives a process re-exec."""
+        if not spots:
+            return 0
+        day = _today_str(trading_day)
+        now = datetime.utcnow()
+        rows = [
+            {"trading_day": day, "underlying": str(u), "day_open": str(ltp),
+             "ltp": str(ltp), "updated_at": now}
+            for u, ltp in spots.items()
+        ]
+        stmt = pg_insert(IndexSpotRow).values(rows)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["trading_day", "underlying"],
+            set_={"ltp": stmt.excluded.ltp, "updated_at": stmt.excluded.updated_at},
+        )
+        with Session(self._engine) as session:
+            session.exec(stmt)
+            session.commit()
+        return len(rows)
+
+    def index_spots(self, trading_day: date | None = None) -> list[IndexSpotRow]:
+        """Today's index-spot rows (one per underlying), for the dashboard rate ticker."""
+        day = _today_str(trading_day)
+        with Session(self._engine) as session:
+            return list(
+                session.exec(select(IndexSpotRow).where(IndexSpotRow.trading_day == day))
+            )
 
     # -- Audit (append-only) -----------------------------------------------------------
 

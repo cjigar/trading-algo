@@ -100,6 +100,21 @@ def test_live_quotes_upsert_replaces_previous_price(repo: Repository):
     assert repo.live_quotes() == {"11536": Decimal("101.25"), "11537": Decimal("80")}
 
 
+def test_index_spots_day_open_set_once_ltp_updates(repo: Repository):
+    repo.upsert_index_spots({"NIFTY": Decimal("23800"), "SENSEX": Decimal("76000")})
+    repo.upsert_index_spots({"NIFTY": Decimal("23912.5")})  # later tick, same day
+    rows = {r.underlying: r for r in repo.index_spots()}
+    # ltp advances but day_open stays the day's first price (survives a re-exec).
+    assert rows["NIFTY"].ltp == "23912.5"
+    assert rows["NIFTY"].day_open == "23800"
+    assert rows["SENSEX"].ltp == "76000" and rows["SENSEX"].day_open == "76000"
+
+
+def test_index_spots_empty_is_noop(repo: Repository):
+    assert repo.upsert_index_spots({}) == 0
+    assert repo.index_spots() == []
+
+
 def test_live_quotes_filters_to_requested_tokens(repo: Repository):
     repo.upsert_live_quotes({"11536": Decimal("100"), "11537": Decimal("80")})
     assert repo.live_quotes(["11537"]) == {"11537": Decimal("80")}

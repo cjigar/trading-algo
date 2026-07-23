@@ -43,6 +43,18 @@ def test_state(client, auth, repo):
     assert body["strategy"] == "oi_selling"  # committed default
 
 
+def test_state_spots_carry_day_change(client, auth, repo):
+    repo.upsert_index_spots({"NIFTY": Decimal("23800")})
+    repo.upsert_index_spots({"NIFTY": Decimal("23912")})  # +112 on the day
+    body = client.get("/api/state", headers=auth).json()
+    spots = {s["underlying"]: s for s in body["spots"]}
+    assert spots["NIFTY"]["ltp"] == 23912.0
+    assert spots["NIFTY"]["day_open"] == 23800.0
+    assert spots["NIFTY"]["change"] == 112.0
+    assert round(spots["NIFTY"]["change_pct"], 4) == round(112 / 23800 * 100, 4)
+    assert spots["NIFTY"]["stale"] is False
+
+
 def test_pnl_and_trades(client, auth, repo):
     repo.record_trade(_trade(Side.BUY, 65, "100"))
     repo.record_trade(_trade(Side.SELL, 65, "130"))
@@ -133,7 +145,10 @@ def test_stream_payload_builder(repo):
     payload = build_stream_payload()
     # Everything that changes intraday rides the stream, so the dashboard never falls back on a
     # one-shot fetch that then sits stale.
-    assert set(payload) == {"state", "pnl", "positions", "broker_pnl", "chain"}
+    assert set(payload) == {
+        "state", "pnl", "positions", "orders", "broker_pnl",
+        "broker_positions", "broker_trades", "chain",
+    }
     assert payload["state"]["algo_state"] == "HALTED"
     # chain payload carries per-strike trend fields identical in shape to /api/chain
     for row in payload["chain"]["per_strike"]:
@@ -158,3 +173,37 @@ def test_pnl_reports_unrealized_from_published_quotes(client, auth, repo):
     # The loop's own reading is carried alongside, with its age.
     assert pnl["engine"]["unrealized"] == 1950.0
     assert pnl["engine"]["age_seconds"] < 60
+
+
+# -- Live broker account: broker-trades endpoint + normalization -----------------------
+
+RAW_BROKER_TRADE = {
+    "flTrdId": "T1", "nOrdNo": "B1", "pTrdSymbol": "SENSEX24500CE", "trnsTp": "S",
+    "fldQty": "20", "avgPrc": "80", "flDtTm": "23-Jul-2026 11:30:00",
+}
+
+
+def test_broker_trades_out_normalizes_raw_dicts():
+    from app.schemas import broker_trades_out
+
+    out = broker_trades_out([RAW_BROKER_TRADE])
+    assert len(out) == 1
+    assert out[0].symbol == "SENSEX24500CE"
+    assert out[0].side == "S"
+    assert out[0].quantity == 20
+    assert out[0].price == 80.0
+    assert "2026" in out[0].time
+
+
+def test_broker_trades_out_skips_unparseable():
+    from app.schemas import broker_trades_out
+
+    assert broker_trades_out([{"garbage": "no symbol"}]) == []
+
+
+def test_broker_trades_endpoint(client, auth, repo):
+    repo.replace_broker_trades([RAW_BROKER_TRADE])
+    r = client.get("/api/broker-trades", headers=auth)
+    assert r.status_code == 200
+    body = r.json()
+    assert any(row["symbol"] == "SENSEX24500CE" and row["quantity"] == 20 for row in body)

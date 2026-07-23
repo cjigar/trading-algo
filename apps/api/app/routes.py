@@ -24,6 +24,7 @@ from app.schemas import (
     StateOut,
     TradeOut,
     broker_pnl_out,
+    broker_trades_out,
     chain_out,
     orders_out,
     pnl_out,
@@ -87,8 +88,14 @@ def get_trades(bridge: StateBridge = Depends(get_bridge)):
 
 @api.get("/broker-positions")
 def get_broker_positions(bridge: StateBridge = Depends(get_bridge)) -> list[dict[str, Any]]:
-    """Live broker positions captured at the algo's last reconcile (raw broker fields)."""
+    """Live broker positions from the algo's last account refresh (raw broker fields)."""
     return bridge.broker_positions()
+
+
+@api.get("/broker-trades", response_model=list[TradeOut])
+def get_broker_trades(bridge: StateBridge = Depends(get_bridge)):
+    """The live broker trade report (real account executions) from the last account refresh."""
+    return broker_trades_out(bridge.broker_trades())
 
 
 @api.get("/broker-pnl", response_model=BrokerPnLOut)
@@ -176,11 +183,15 @@ def build_stream_payload() -> dict[str, Any]:
     state = bridge.read_state()
     active = settings.active_underlying_for_today()
     u = active.value if active else None
+    broker_positions = bridge.broker_positions()
     return {
         "state": state_out(settings, state).model_dump(),
         "pnl": pnl_out(state).model_dump(),
         "positions": [p.model_dump() for p in positions_out(state)],
-        "broker_pnl": broker_pnl_out(bridge.broker_positions()).model_dump(),
+        "orders": [o.model_dump() for o in orders_out(state)],
+        "broker_pnl": broker_pnl_out(broker_positions).model_dump(),
+        "broker_positions": broker_positions,
+        "broker_trades": [t.model_dump() for t in broker_trades_out(bridge.broker_trades())],
         "chain": _chain_out_with_trends(bridge, settings, u).model_dump(),
     }
 

@@ -133,6 +133,10 @@ def main() -> None:
     # ours — and the open positions' prices — to the shared database on a timer.
     pnl_every = max(1, settings.pnl_snapshot_seconds)
     since_pnl = 0
+    # Poll the live broker account (positions/orders/trades) onto the DB so the dashboard's broker
+    # views track the real Kotak account instead of a boot-time snapshot.
+    broker_every = max(1, settings.broker_refresh_seconds)
+    since_broker = 0
     # Monotonic timestamp the feed first went stale (None while healthy), for hard recovery.
     stale_since: float | None = None
     log.info("running", strategy=settings.strategy)
@@ -175,7 +179,18 @@ def main() -> None:
                     orch.write_pnl_snapshot()
                 except Exception:  # noqa: BLE001
                     log.exception("pnl_snapshot_failed")
+                try:
+                    orch.write_index_spots()  # live NIFTY/SENSEX spot for the dashboard ticker
+                except Exception:  # noqa: BLE001
+                    log.exception("index_spot_publish_failed")
                 since_pnl = 0
+            since_broker += 1
+            if since_broker >= broker_every:
+                try:
+                    orch.refresh_broker_account()
+                except Exception:  # noqa: BLE001
+                    log.exception("broker_account_refresh_failed")
+                since_broker = 0
             time.sleep(1.0)
     finally:
         scheduler.shutdown()

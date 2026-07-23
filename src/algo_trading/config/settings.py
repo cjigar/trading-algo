@@ -89,6 +89,9 @@ class Settings(BaseSettings):
     snapshot_min_interval_seconds: int = 2  # min gap between persisted snapshots per token
     # Cadence at which the loop publishes P&L + open-position prices for the dashboard process.
     pnl_snapshot_seconds: int = 5
+    # Cadence at which the loop polls the broker account (positions/orders/trades) so the dashboard
+    # shows the live Kotak account, not a boot-time snapshot. Broker reads are not rate-limited.
+    broker_refresh_seconds: int = 5
     # How old a published quote may be before the dashboard refuses to mark positions against it
     # (a dead feed must read as stale, not as a frozen-but-plausible price).
     live_quote_max_age_seconds: int = 60
@@ -296,6 +299,7 @@ EDITABLE_FIELDS: frozenset[str] = frozenset({
     "daily_loss_cap", "max_positions", "max_trades_per_day", "flatten_on_kill_switch",
     "candle_timeframe_minutes", "strike_selection",
     "oi_trend_windows", "oi_trend_flat_threshold",
+    "broker_refresh_seconds",
 })
 
 

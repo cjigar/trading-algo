@@ -153,6 +153,32 @@ def test_populated_legacy_table_is_converted_without_losing_rows(fresh_db):
         engine.dispose()
 
 
+def test_bootstrap_adds_declared_index_missing_from_preexisting_table(fresh_db):
+    """A model index added after the table already existed must be created by bootstrap.
+
+    ``create_all`` skips tables that already exist, so ``ix_chain_snap_token_day_ts`` (declared on
+    the snapshot model but added after the live table was first created) would otherwise never
+    land — the exact gap seen in production. ``_ensure_declared_indexes`` closes it.
+    """
+    setup = create_engine_from_url(fresh_db, create=False)
+    with setup.connect() as conn:
+        conn.execute(text(LEGACY_CHAIN_DDL))  # pre-existing table, no composite index
+        conn.commit()
+    setup.dispose()
+
+    engine = create_engine_from_url(fresh_db, settings=SchemaTuning())
+    try:
+        with engine.connect() as conn:
+            assert conn.execute(
+                text(
+                    "SELECT 1 FROM pg_indexes WHERE tablename = 'option_chain_snapshots' "
+                    "AND indexname = 'ix_chain_snap_token_day_ts'"
+                )
+            ).first() is not None
+    finally:
+        engine.dispose()
+
+
 # --- read path over compressed chunks --------------------------------------------------
 
 

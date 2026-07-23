@@ -12,8 +12,7 @@ Run:
 
 from __future__ import annotations
 
-from typing import Any
-
+from algo_trading.broker.report_normalize import ORDER_FIELD_CANDIDATES, normalize_order_row
 from algo_trading.config.secrets import load_secrets
 from algo_trading.config.settings import get_settings
 from algo_trading.observability.logging import configure_logging, get_logger
@@ -22,63 +21,9 @@ from algo_trading.persistence.repositories import Repository
 
 log = get_logger("tools.import_orders")
 
-# our-field -> candidate order-report column names (case-insensitive, first match wins)
-ORDER_FIELD_CANDIDATES: dict[str, list[str]] = {
-    "order_id": ["nOrdNo", "order_id", "orderId", "ordNo", "nsOrdNo"],
-    "trading_symbol": ["trdSym", "pTrdSymbol", "tradingsymbol", "sym", "symbol"],
-    "side": ["trnsTp", "buySell", "transaction_type", "side", "bs"],
-    "quantity": ["qty", "quantity", "ordQty", "totQty"],
-    "filled_quantity": ["fldQty", "filledQty", "fillQty", "cumQty"],
-    "price": ["prc", "avgPrc", "price", "ordPrc"],
-    "order_type": ["prcTp", "order_type", "ordTyp", "prctype"],
-    "product": ["prod", "product", "prodType"],
-    "status": ["ordSt", "status", "orderStatus"],
-    "order_time": ["ordDtTm", "flDtTm", "orderTime", "ordEntTm", "hsUpTm"],
-}
-
-
-def _pick(raw: dict, candidates: list[str]) -> Any:
-    lower = {k.lower(): k for k in raw}
-    for cand in candidates:
-        if cand.lower() in lower:
-            return raw[lower[cand.lower()]]
-    return None
-
-
-def _to_int(v: Any) -> int:
-    try:
-        return int(float(v))
-    except (ValueError, TypeError):
-        return 0
-
-
-def _norm_side(v: Any) -> str:
-    s = str(v).strip().upper()
-    if s in ("B", "BUY", "1", "+1"):
-        return "B"
-    if s in ("S", "SELL", "-1"):
-        return "S"
-    return s[:1] or "B"
-
-
-def normalize_order_row(raw: dict) -> dict | None:
-    """Normalize a broker order-report row into fields for record_broker_order, or None."""
-    order_id = _pick(raw, ORDER_FIELD_CANDIDATES["order_id"])
-    symbol = _pick(raw, ORDER_FIELD_CANDIDATES["trading_symbol"])
-    if not order_id or not symbol:
-        return None
-    return {
-        "order_id": str(order_id),
-        "trading_symbol": str(symbol),
-        "side": _norm_side(_pick(raw, ORDER_FIELD_CANDIDATES["side"])),
-        "quantity": _to_int(_pick(raw, ORDER_FIELD_CANDIDATES["quantity"])),
-        "filled_quantity": _to_int(_pick(raw, ORDER_FIELD_CANDIDATES["filled_quantity"])),
-        "price": str(_pick(raw, ORDER_FIELD_CANDIDATES["price"]) or "0"),
-        "order_type": str(_pick(raw, ORDER_FIELD_CANDIDATES["order_type"]) or ""),
-        "product": str(_pick(raw, ORDER_FIELD_CANDIDATES["product"]) or ""),
-        "status": str(_pick(raw, ORDER_FIELD_CANDIDATES["status"]) or ""),
-        "order_time": str(_pick(raw, ORDER_FIELD_CANDIDATES["order_time"]) or ""),
-    }
+# Normalizer (and its candidate-key table) now lives in broker.report_normalize so the live
+# broker-account poller can share it; re-exported here for backwards compatibility.
+__all__ = ["ORDER_FIELD_CANDIDATES", "normalize_order_row", "import_orders", "main"]
 
 
 def import_orders(repo: Repository, rows: list[dict]) -> dict:

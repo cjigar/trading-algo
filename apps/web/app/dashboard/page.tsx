@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { Banner, DataTable, Metric, Tabs } from "@/components/ui";
-import { api, clearToken, type BrokerPnL, type Chain, type EnginePnL, type OiTrends, type Order, type Trade } from "@/lib/api";
+import { Banner, DataTable, Metric, SpotTicker, Tabs } from "@/components/ui";
+import { api, clearToken, type BrokerPnL, type Chain, type EnginePnL, type OiTrends } from "@/lib/api";
+import { fmtOi } from "@/lib/format";
 import { useStream } from "@/lib/useStream";
 
 const TABS = ["P&L", "Positions", "Orders", "Trades", "Option Chain", "Config"];
@@ -11,25 +12,17 @@ const TABS = ["P&L", "Positions", "Orders", "Trades", "Option Chain", "Config"];
 export default function Dashboard() {
   const { data, connected } = useStream();
   const [tab, setTab] = useState("P&L");
-  const [brokerPositions, setBrokerPositions] = useState<Record<string, unknown>[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [trades, setTrades] = useState<Trade[]>([]);
   const [config, setConfig] = useState<Record<string, unknown>>({});
   const [saveMsg, setSaveMsg] = useState("");
   // Option-chain view: which underlying to show (null = follow today's active), plus its live chain.
   const [chainUnderlying, setChainUnderlying] = useState<string | null>(null);
   const [chainView, setChainView] = useState<Chain | null>(null);
 
-  // Positions and broker P&L are no longer polled here — they ride the SSE stream, which keeps
-  // them in step with the P&L numbers computed from the same snapshot.
+  // Orders, trades, positions and broker P&L now ride the SSE stream (3s), computed from the same
+  // snapshot so they stay in step. Only the config editor and a manually-selected (non-active)
+  // chain underlying still need a one-shot fetch.
   const refresh = useCallback(async () => {
-    const [bp, o, t, c, ch] = await Promise.all([
-      api.brokerPositions(), api.orders(), api.trades(),
-      api.config(), api.chain(chainUnderlying ?? undefined),
-    ]);
-    setBrokerPositions(bp);
-    setOrders(o);
-    setTrades(t);
+    const [c, ch] = await Promise.all([api.config(), api.chain(chainUnderlying ?? undefined)]);
     setConfig(c);
     setChainView(ch);
   }, [chainUnderlying]);
@@ -59,6 +52,9 @@ export default function Dashboard() {
   const state = data?.state;
   const pnl = data?.pnl;
   const positions = data?.positions ?? [];
+  const orders = data?.orders ?? [];
+  const brokerTrades = data?.broker_trades ?? [];
+  const brokerPositions = data?.broker_positions ?? [];
   const brokerPnl = data?.broker_pnl ?? null;
   const underlyings = state?.oi_underlyings ?? [];
   const activeUnderlying = state?.active_underlying ?? null;
@@ -78,6 +74,8 @@ export default function Dashboard() {
       </div>
 
       {state && <Banner mode={state.mode} liveArmed={state.live_armed} algoState={state.algo_state} strategy={state.strategy} />}
+
+      <SpotTicker spots={state?.spots ?? []} />
 
       <div className="flex items-center gap-2">
         <span className="mr-1 text-xs text-neutral-500">Auto 9:15–15:30 IST</span>
@@ -140,14 +138,14 @@ export default function Dashboard() {
               Broker positions (live account) · {brokerPositions.length}
             </h2>
             <p className="text-xs text-neutral-500">
-              Captured from the broker at the algo&apos;s last reconcile (startup). Includes positions opened outside this algo.
+              Pulled live from the broker account (refreshed continuously). Includes positions opened outside this algo.
             </p>
             <DataTable rows={brokerPositions} />
           </div>
         </div>
       )}
       {tab === "Orders" && <DataTable rows={orders as unknown as Record<string, unknown>[]} />}
-      {tab === "Trades" && <DataTable rows={trades as unknown as Record<string, unknown>[]} />}
+      {tab === "Trades" && <DataTable rows={brokerTrades as unknown as Record<string, unknown>[]} />}
       {tab === "Option Chain" && (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2">
@@ -175,8 +173,8 @@ export default function Dashboard() {
             <>
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                 <Metric label="ATM strike" value={displayChain.atm ? displayChain.atm.toLocaleString() : "—"} />
-                <Metric label="Total CE OI" value={displayChain.ce_oi_total.toLocaleString()} />
-                <Metric label="Total PE OI" value={displayChain.pe_oi_total.toLocaleString()} />
+                <Metric label="Total CE OI" value={fmtOi(displayChain.ce_oi_total)} />
+                <Metric label="Total PE OI" value={fmtOi(displayChain.pe_oi_total)} />
                 <Metric label="Higher-OI side" value={displayChain.selected_side} />
               </div>
               <OptionChainTable chain={displayChain} />
@@ -331,7 +329,7 @@ function OptionChainTable({ chain }: { chain: Chain }) {
   });
   const chg = (v: number) => (
     <span className={v > 0 ? "text-emerald-400" : v < 0 ? "text-red-400" : "text-neutral-500"}>
-      {v > 0 ? "+" : ""}{v.toLocaleString()}
+      {v > 0 ? "+" : ""}{fmtOi(v)}
     </span>
   );
   return (
@@ -362,7 +360,7 @@ function OptionChainTable({ chain }: { chain: Chain }) {
               className={`border-t border-neutral-800/60 ${r.is_atm ? "bg-blue-950/60" : ""}`}
             >
               <td className="px-3 py-1.5"><TrendCell trends={r.ce_oi_trends} align="right" /></td>
-              <td className="px-3 py-1.5" style={bar(r.ce_oi, "ce")}>{r.ce_oi.toLocaleString()}</td>
+              <td className="px-3 py-1.5" style={bar(r.ce_oi, "ce")}>{fmtOi(r.ce_oi)}</td>
               <td className="px-3 py-1.5">{chg(r.ce_chg_oi)}</td>
               <td className="px-3 py-1.5 text-emerald-400">{r.ce_ltp.toFixed(2)}</td>
               <td className={`px-3 py-1.5 text-center font-semibold ${r.is_atm ? "text-blue-300" : "text-neutral-200"}`}>
@@ -370,7 +368,7 @@ function OptionChainTable({ chain }: { chain: Chain }) {
               </td>
               <td className="px-3 py-1.5 text-left text-red-400">{r.pe_ltp.toFixed(2)}</td>
               <td className="px-3 py-1.5 text-left">{chg(r.pe_chg_oi)}</td>
-              <td className="px-3 py-1.5 text-left" style={bar(r.pe_oi, "pe")}>{r.pe_oi.toLocaleString()}</td>
+              <td className="px-3 py-1.5 text-left" style={bar(r.pe_oi, "pe")}>{fmtOi(r.pe_oi)}</td>
               <td className="px-3 py-1.5 text-left"><TrendCell trends={r.pe_oi_trends} align="left" /></td>
             </tr>
           ))}

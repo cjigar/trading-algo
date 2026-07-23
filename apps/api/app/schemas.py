@@ -2,11 +2,25 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+
 from pydantic import BaseModel
 
+from algo_trading.broker.report_normalize import normalize_trade_row
 from algo_trading.config.settings import Settings
 from algo_trading.dashboard.state_bridge import DashboardState
 from algo_trading.reporting import summarize_broker_positions, summarize_chain, summarize_fills
+
+
+class IndexSpotOut(BaseModel):
+    underlying: str
+    ltp: float
+    day_open: float
+    change: float  # ltp - day_open (points)
+    change_pct: float  # change / day_open * 100
+    age_seconds: float  # how old the reading is
+    stale: bool  # older than the live-quote freshness window
 
 
 class StateOut(BaseModel):
@@ -16,6 +30,7 @@ class StateOut(BaseModel):
     strategy: str  # active strategy: oi_selling | vwap_breakout
     active_underlying: str | None  # the OI underlying that trades today (SENSEX Wed/Thu, NIFTY else)
     oi_underlyings: list[str]
+    spots: list[IndexSpotOut] = []  # live NIFTY/SENSEX spot for the rate ticker
 
 
 class SymbolPnLOut(BaseModel):
@@ -111,13 +126,33 @@ class ChainOut(BaseModel):
     per_strike: list[ChainStrikeOut]
 
 
+def _spot_out(row, max_age_seconds: float) -> IndexSpotOut:
+    def _dec(v) -> Decimal:
+        try:
+            return Decimal(str(v))
+        except (InvalidOperation, ValueError, TypeError):
+            return Decimal(0)
+
+    ltp, day_open = _dec(row.ltp), _dec(row.day_open)
+    change = ltp - day_open
+    pct = (change / day_open * 100) if day_open != 0 else Decimal(0)
+    age = max(0.0, (datetime.utcnow() - row.updated_at).total_seconds())
+    return IndexSpotOut(
+        underlying=row.underlying, ltp=float(ltp), day_open=float(day_open),
+        change=float(change), change_pct=float(pct),
+        age_seconds=age, stale=age > max_age_seconds,
+    )
+
+
 def state_out(settings: Settings, s: DashboardState) -> StateOut:
     active = settings.active_underlying_for_today()
+    max_age = float(getattr(settings, "live_quote_max_age_seconds", 60))
     return StateOut(
         mode=settings.mode.value, live_armed=settings.live_armed, algo_state=s.algo_state.value,
         strategy=settings.strategy,
         active_underlying=active.value if active else None,
         oi_underlyings=[u.value for u in settings.oi_underlyings],
+        spots=[_spot_out(row, max_age) for row in s.spots],
     )
 
 
@@ -149,6 +184,19 @@ def positions_out(s: DashboardState) -> list[PositionOut]:
 def trades_out(s: DashboardState) -> list[TradeOut]:
     return [TradeOut(time=str(t.timestamp), symbol=t.instrument.trading_symbol, side=t.side.value,
                      quantity=t.quantity, price=float(t.price)) for t in s.trades]
+
+
+def broker_trades_out(rows: list[dict]) -> list[TradeOut]:
+    """The live broker trade report (raw Kotak dicts) mapped to clean TradeOut rows, reusing the
+    same tolerant normalizer as the import CLI. Unparseable rows are skipped."""
+    out: list[TradeOut] = []
+    for raw in rows:
+        f = normalize_trade_row(raw)
+        if f is None:
+            continue
+        out.append(TradeOut(time=str(f["timestamp"] or ""), symbol=f["trading_symbol"],
+                            side=f["side"], quantity=f["quantity"], price=float(f["price"])))
+    return out
 
 
 def orders_out(s: DashboardState) -> list[OrderOut]:

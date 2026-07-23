@@ -76,6 +76,7 @@ def main() -> None:
         while not stop["flag"]:  # pragma: no cover - long-running loop
             orch.flush_snapshots()  # persist buffered chain snapshots
             orch.recover_stale_feed()  # a subscription lost to the connect race self-heals here
+            orch.write_index_spots()  # live NIFTY/SENSEX spot for the dashboard ticker
             time.sleep(2.0)
     finally:
         orch.flush_snapshots()
