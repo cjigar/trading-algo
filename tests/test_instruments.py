@@ -155,6 +155,22 @@ def test_banknifty_rows_classify_as_banknifty_not_nifty():
     assert sm.for_underlying(Underlying.BANKNIFTY) and not sm.for_underlying(Underlying.NIFTY)
 
 
+def test_sensex50_future_not_classified_as_sensex():
+    # BSE lists SENSEX50 ("SENSEX50...FUT") alongside the real SENSEX; its symbol contains
+    # "SENSEX", so a naive match misfiles it as SENSEX (observed live: SENSEX5026JULFUT).
+    df = pd.DataFrame([
+        _option_row(symbol="SENSEX25JAN76000CE", name="SENSEX"),  # keep a real option so parse succeeds
+        _future_row("SENSEX26JULFUT", "1", "2026-07-30", name="SENSEX"),
+        _future_row("SENSEX5026JULFUT", "2", "2036-07-29", name="SENSEX50"),
+    ], )
+    sm = ScripMaster.from_dataframe(df, ExchangeSegment.BSE_FO)
+    futs = {f.underlying: f for f in sm.futures}
+    # Only the real SENSEX future is captured; SENSEX50 is dropped (unmodelled index).
+    assert set(futs) == {Underlying.SENSEX}
+    assert futs[Underlying.SENSEX].instrument_token == "1"
+    assert sm.near_month_future(Underlying.SENSEX, today=date(2026, 7, 1)).instrument_token == "1"
+
+
 def test_from_dataframe_missing_columns_raises():
     df = pd.DataFrame([{"foo": 1, "bar": 2}])
     with pytest.raises(ScripMasterError):

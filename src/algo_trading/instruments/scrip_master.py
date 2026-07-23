@@ -242,13 +242,16 @@ class ScripMaster:
     # Other NSE "NIFTY *" indices we do NOT trade/display, so a bare "NIFTY" match must exclude
     # them. BANK is deliberately absent — BANKNIFTY is matched first, before this check.
     _NIFTY_EXCLUDE = ("FIN", "MID", "NXT", "NEXT")
+    # BSE "SENSEX 50" / "SNSX50" is a distinct index; "SENSEX50" contains "SENSEX" as a substring,
+    # so a bare "SENSEX" match must exclude it (same trap as BANKNIFTY vs NIFTY).
+    _SENSEX_EXCLUDE = ("SENSEX50", "SNSX50")
 
     @classmethod
     def _infer_underlying(cls, name: str, symbol: str) -> Underlying | None:
         blob = f"{name} {symbol}".upper()
         if "BANKEX" in blob:
             return None  # BSE BANKEX, not SENSEX
-        if "SENSEX" in blob:
+        if "SENSEX" in blob and not any(x in blob for x in cls._SENSEX_EXCLUDE):
             return Underlying.SENSEX
         # BankNifty before plain NIFTY: "BANKNIFTY" / "NIFTY BANK" both contain "NIFTY".
         if "BANKNIFTY" in blob or "NIFTY BANK" in blob:
