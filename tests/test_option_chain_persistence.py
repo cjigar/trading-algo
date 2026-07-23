@@ -31,6 +31,20 @@ def test_write_and_latest_state(repo: Repository):
     assert by_token["T2"].option_type == "PE"
 
 
+def test_write_chain_snapshot_persists_vwap(repo: Repository):
+    repo.write_chain_snapshots([
+        _snap("T1", "23000", oi=1000, ltp="100", ts=datetime(2025, 1, 15, 10, 0)) | {"vwap": "98.5"},
+    ])
+    row = repo.latest_chain_state()[0]
+    assert row.vwap == "98.5"
+
+
+def test_write_chain_snapshot_vwap_defaults_none(repo: Repository):
+    # A snapshot dict without a vwap key stores NULL, not a crash.
+    repo.write_chain_snapshots([_snap("T1", "23000", oi=1000, ts=datetime(2025, 1, 15, 10, 0))])
+    assert repo.latest_chain_state()[0].vwap is None
+
+
 # The broker sends OI in a token's first full packet and NULL in the LTP-only ticks that follow,
 # so "newest row" and "newest OI reading" are different rows for nearly every token.
 

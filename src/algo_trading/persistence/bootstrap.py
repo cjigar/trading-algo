@@ -64,6 +64,7 @@ def bootstrap_schema(engine: Engine, *, settings=None, retries: int = 1) -> None
         for table, time_column in HYPERTABLES.items():
             _ensure_primary_key(conn, table, time_column)
             _ensure_hypertable(conn, table, time_column, chunk_days)
+        _ensure_chain_columns(conn)
         _ensure_compression(conn, CHAIN_TABLE, compress_days)
         _ensure_retention(conn, CHAIN_TABLE, retention_days)
         _ensure_chain_aggregate(conn, bucket_seconds)
@@ -124,6 +125,14 @@ def _ensure_declared_indexes(engine: Engine) -> None:
     for table in SQLModel.metadata.tables.values():
         for index in table.indexes:
             index.create(bind=engine, checkfirst=True)
+
+
+def _ensure_chain_columns(conn: Connection) -> None:
+    """Add columns introduced after the hypertable already existed. create_all() only creates
+    tables, never alters them, so new columns on option_chain_snapshots are added here."""
+    conn.execute(
+        text(f"ALTER TABLE {CHAIN_TABLE} ADD COLUMN IF NOT EXISTS vwap varchar")
+    )
 
 
 def _install_extension(conn: Connection) -> None:

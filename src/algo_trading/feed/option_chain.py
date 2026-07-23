@@ -116,6 +116,7 @@ class OptionChainManager:
                     "underlying": inst.underlying.value, "strike": str(inst.strike),
                     "option_type": inst.option_type.value, "instrument_token": tick.instrument_token,
                     "oi": tick.oi, "ltp": str(tick.ltp), "volume": tick.volume,
+                    "vwap": str(vwap.value) if vwap.value is not None else None,
                     "timestamp": tick.timestamp,
                 }
             )

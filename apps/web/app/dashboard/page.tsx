@@ -336,21 +336,34 @@ function OptionChainTable({ chain }: { chain: Chain }) {
       {v > 0 ? "+" : ""}{fmtOi(v)}
     </span>
   );
+  const ltpVsVwap = (ltp: number, vwap: number | null | undefined) => {
+    if (vwap == null) return <span>{ltp.toFixed(2)}</span>;
+    const up = ltp >= vwap;
+    return (
+      <span className={up ? "text-emerald-400" : "text-red-400"}>
+        {ltp.toFixed(2)} {up ? "↑" : "↓"}
+      </span>
+    );
+  };
+  const vwapCell = (v: number | null | undefined) =>
+    v == null ? <span className="text-neutral-500">—</span> : <span>{v.toFixed(2)}</span>;
   return (
     <div className="overflow-x-auto rounded-md border border-neutral-800">
       <table className="w-full text-right text-sm tabular-nums">
         <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
           <tr>
-            <th className="px-3 py-2" colSpan={4}>Calls (CE)</th>
+            <th className="px-3 py-2" colSpan={5}>Calls (CE)</th>
             <th className="px-3 py-2 text-center">Strike</th>
-            <th className="px-3 py-2 text-left" colSpan={4}>Puts (PE)</th>
+            <th className="px-3 py-2 text-left" colSpan={5}>Puts (PE)</th>
           </tr>
           <tr className="text-[10px]">
             <th className="px-3 py-1">OI Trend</th>
             <th className="px-3 py-1">OI</th>
             <th className="px-3 py-1">Chg OI</th>
             <th className="px-3 py-1">LTP</th>
+            <th className="px-3 py-1">VWAP</th>
             <th className="px-3 py-1 text-center">{chain.atm ? `ATM ${chain.atm.toLocaleString()}` : ""}</th>
+            <th className="px-3 py-1 text-left">VWAP</th>
             <th className="px-3 py-1 text-left">LTP</th>
             <th className="px-3 py-1 text-left">Chg OI</th>
             <th className="px-3 py-1 text-left">OI</th>
@@ -366,11 +379,13 @@ function OptionChainTable({ chain }: { chain: Chain }) {
               <td className="px-3 py-1.5"><TrendCell trends={r.ce_oi_trends} align="right" /></td>
               <td className="px-3 py-1.5" style={bar(r.ce_oi, "ce")}>{fmtOi(r.ce_oi)}</td>
               <td className="px-3 py-1.5">{chg(r.ce_chg_oi)}</td>
-              <td className="px-3 py-1.5 text-emerald-400">{r.ce_ltp.toFixed(2)}</td>
+              <td className="px-3 py-1.5">{ltpVsVwap(r.ce_ltp, r.ce_vwap)}</td>
+              <td className="px-3 py-1.5">{vwapCell(r.ce_vwap)}</td>
               <td className={`px-3 py-1.5 text-center font-semibold ${r.is_atm ? "text-blue-300" : "text-neutral-200"}`}>
                 {r.strike.toLocaleString()}{r.is_atm ? " •" : ""}
               </td>
-              <td className="px-3 py-1.5 text-left text-red-400">{r.pe_ltp.toFixed(2)}</td>
+              <td className="px-3 py-1.5 text-left">{vwapCell(r.pe_vwap)}</td>
+              <td className="px-3 py-1.5 text-left">{ltpVsVwap(r.pe_ltp, r.pe_vwap)}</td>
               <td className="px-3 py-1.5 text-left">{chg(r.pe_chg_oi)}</td>
               <td className="px-3 py-1.5 text-left" style={bar(r.pe_oi, "pe")}>{fmtOi(r.pe_oi)}</td>
               <td className="px-3 py-1.5 text-left"><TrendCell trends={r.pe_oi_trends} align="left" /></td>

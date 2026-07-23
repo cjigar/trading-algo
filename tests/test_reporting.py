@@ -230,3 +230,18 @@ def test_broker_positions_open_without_quote_is_pending():
     assert p.mtm_pending and p.ltp is None
     assert p.total_pnl == p.realized_pnl == Decimal("0")  # falls back to realized
     assert s.mtm_pending_count == 1
+
+
+def test_summarize_chain_maps_vwap_per_side():
+    from types import SimpleNamespace
+
+    from algo_trading.reporting import summarize_chain
+
+    rows = [
+        SimpleNamespace(strike="100", option_type="CE", oi=10, ltp="5.5", instrument_token="c", vwap="5.0"),
+        SimpleNamespace(strike="100", option_type="PE", oi=20, ltp="4.5", instrument_token="p", vwap=None),
+    ]
+    cs = summarize_chain(rows)
+    row = cs.per_strike[0]
+    assert row.ce_vwap == Decimal("5.0")
+    assert row.pe_vwap is None

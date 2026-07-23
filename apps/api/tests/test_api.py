@@ -117,6 +117,18 @@ def test_chain_oi_trends_with_history(client, auth, repo):
     assert row["ce_oi_trends"]["15m"]["dir"] == "na"
 
 
+def test_chain_exposes_vwap(client, auth, repo):
+    repo.write_chain_snapshots([
+        {"underlying": "NIFTY", "strike": "23000", "option_type": "CE", "instrument_token": "c1",
+         "oi": 4000, "ltp": "100", "volume": 10, "vwap": "97.5"},
+        {"underlying": "NIFTY", "strike": "23000", "option_type": "PE", "instrument_token": "p1",
+         "oi": 800, "ltp": "90", "volume": 10},  # no vwap -> None
+    ])
+    row = client.get("/api/chain", params={"underlying": "NIFTY"}, headers=auth).json()["per_strike"][0]
+    assert row["ce_vwap"] == 97.5
+    assert row["pe_vwap"] is None
+
+
 def test_control_enqueues_command(client, auth, repo):
     assert client.post("/api/control/stop", headers=auth).json()["ok"] is True
     cmds = [c.command for c in repo.pop_pending_commands()]
