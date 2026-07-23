@@ -119,6 +119,9 @@ class Settings(BaseSettings):
     oi_trend_windows: Annotated[list[int], NoDecode] = Field(default_factory=lambda: [1, 3, 5, 15])
     # Absolute OI change (contracts) below which a window is classified Flat rather than Up/Down.
     oi_trend_flat_threshold: int = 0
+    # Annualized risk-free rate used to price the put-call-parity forward and solve option IV.
+    # ~India T-bill. Dividend yield is assumed 0 for the index.
+    risk_free_rate: Decimal = Decimal("0.065")
     chain_retention_days: int = 14  # backstop retention: drop chain-snapshot chunks older than this
     # Retention model: "expiry" runs the app-level per-expiry purge (delete a week once its expiry
     # passes); "days" disables it and relies solely on the time-based chain_retention_days policy.
@@ -324,6 +327,7 @@ EDITABLE_FIELDS: frozenset[str] = frozenset({
     "candle_timeframe_minutes", "strike_selection",
     "oi_trend_windows", "oi_trend_flat_threshold",
     "broker_refresh_seconds",
+    "risk_free_rate",
 })
 
 
