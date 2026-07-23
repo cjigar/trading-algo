@@ -191,3 +191,19 @@ def test_writer_min_interval_dedups(repo: Repository):
     from algo_trading.persistence.db import OptionChainSnapshotRow
     with Session(repo._engine) as s:
         assert len(s.exec(select(OptionChainSnapshotRow)).all()) == 2
+
+
+def test_purge_removes_expired_keeps_live_and_null(repo: Repository):
+    # Expired (NIFTY Tue 2025-01-21), live (2025-01-28), and a legacy NULL-expiry row.
+    repo.write_chain_snapshots([_snap("EXP", "23000", ts=datetime(2025, 1, 20, 10, 0)) | {"expiry": date(2025, 1, 21)}])
+    repo.write_chain_snapshots([_snap("LIVE", "23050", ts=datetime(2025, 1, 20, 10, 0)) | {"expiry": date(2025, 1, 28)}])
+    repo.write_chain_snapshots([_snap("NULLX", "23100", ts=datetime(2025, 1, 20, 10, 0))])  # NULL expiry
+    deleted = repo.purge_expired_chain_snapshots(today=date(2025, 1, 22))
+    assert deleted == 1
+    tokens = {r.instrument_token for r in repo.latest_chain_state()}
+    assert tokens == {"LIVE", "NULLX"}  # expired gone; live + legacy NULL kept
+
+
+def test_purge_is_noop_when_nothing_expired(repo: Repository):
+    repo.write_chain_snapshots([_snap("LIVE", "23050", ts=datetime(2025, 1, 20, 10, 0)) | {"expiry": date(2025, 1, 28)}])
+    assert repo.purge_expired_chain_snapshots(today=date(2025, 1, 22)) == 0

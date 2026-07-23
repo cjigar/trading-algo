@@ -311,6 +311,23 @@ class Repository:
             session.commit()
         return len(rows)
 
+    def purge_expired_chain_snapshots(self, today: date | None = None) -> int:
+        """Delete option-chain snapshots whose contract expiry is strictly before ``today``
+        (expiry-aligned retention). Each underlying self-purges the morning after its own expiry
+        passes — NIFTY on Wednesday, SENSEX on Friday. Rows with a NULL expiry (legacy, written
+        before the expiry column existed) are left for the time-based backstop retention to reap.
+        Returns the number of rows deleted."""
+        cutoff = today or date.today()
+        with Session(self._engine) as session:
+            result = session.exec(
+                delete(OptionChainSnapshotRow).where(
+                    col(OptionChainSnapshotRow.expiry).is_not(None),
+                    OptionChainSnapshotRow.expiry < cutoff,
+                )
+            )
+            session.commit()
+            return result.rowcount or 0
+
     def latest_chain_state(
         self, trading_day: date | None = None, underlying: str | None = None
     ) -> list[OptionChainSnapshotRow]:
