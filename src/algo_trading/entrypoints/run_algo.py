@@ -73,6 +73,11 @@ def build_orchestrator() -> Orchestrator:
 def main() -> None:
     configure_logging()
     settings = get_settings()
+    # Operator alerting (Telegram) — no-op unless ALGO_ALERTS_ENABLED + TELEGRAM_BOT_TOKEN + chat id.
+    # Init before the first log so the 'starting' event can alert (doubles as a crash-loop signal).
+    from algo_trading.observability import alerts
+
+    alerts.init_alerts(settings)
     log.info("starting", mode=settings.mode.value, live_armed=settings.live_armed)
 
     orch = build_orchestrator()

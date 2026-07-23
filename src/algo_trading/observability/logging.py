@@ -59,6 +59,20 @@ def _utc_timestamper(
     return event_dict
 
 
+def _alert_processor(
+    _logger: Any, _method: str, event_dict: MutableMapping[str, Any]
+) -> MutableMapping[str, Any]:
+    """Forward classified events to Telegram (no-op unless alerts are initialised). Runs AFTER
+    redaction so no secret can reach a message; wrapped so alerting can never break logging."""
+    try:
+        from algo_trading.observability import alerts
+
+        alerts.alert_event(dict(event_dict))
+    except Exception:  # noqa: BLE001 - alerting is best-effort; logging must always proceed
+        pass
+    return event_dict
+
+
 def configure_logging(log_dir: str | Path = "logs", level: int = logging.INFO) -> None:
     """Configure structlog + stdlib logging with a per-day rotating JSON file and console output."""
     log_path = Path(log_dir)
@@ -81,6 +95,7 @@ def configure_logging(log_dir: str | Path = "logs", level: int = logging.INFO) -
             structlog.stdlib.add_log_level,
             _utc_timestamper,
             _redact_processor,
+            _alert_processor,  # after redaction: alerts never carry a secret
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
             structlog.processors.JSONRenderer(),

@@ -92,6 +92,13 @@ class Settings(BaseSettings):
     # Cadence at which the loop polls the broker account (positions/orders/trades) so the dashboard
     # shows the live Kotak account, not a boot-time snapshot. Broker reads are not rate-limited.
     broker_refresh_seconds: int = 5
+
+    # --- Telegram alerting (bot token is a secret in env: TELEGRAM_BOT_TOKEN, never here) ---
+    alerts_enabled: bool = False
+    telegram_chat_id: str = ""  # numeric chat id to send to (not a secret)
+    alert_trade_fills: bool = True  # include the per-fill trade tape (noisier)
+    alert_throttle_seconds: int = 300  # collapse repeats of the same alert within this window
+    alert_rate_limit_per_min: int = 20  # global cap; excess is coalesced into a "+N more" summary
     # How old a published quote may be before the dashboard refuses to mark positions against it
     # (a dead feed must read as stale, not as a frozen-but-plausible price).
     live_quote_max_age_seconds: int = 60
