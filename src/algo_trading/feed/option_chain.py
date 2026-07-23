@@ -15,6 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 
+from algo_trading.analytics.greeks import Greeks, compute_greeks, implied_forward, year_fraction
 from algo_trading.domain.enums import ExchangeSegment, OptionType, Underlying
 from algo_trading.domain.models import Instrument, Tick
 from algo_trading.instruments.option_resolver import WeeklyOptionResolver
@@ -32,6 +33,7 @@ class ChainQuote:
     oi: int | None = None
     ltp: Decimal = Decimal(0)
     volume: int | None = None
+    greeks: Greeks | None = None
 
 
 class OptionChainManager:
@@ -91,14 +93,45 @@ class OptionChainManager:
             log.info("chain_rewindowed", atm=str(self._atm), subscribed=len(new_tokens),
                      window_size=len(self._chain))
 
+    def _atm_forward(self, r: float, T: float) -> float | None:
+        """Parity forward from the ATM CE/PE quotes currently held (None until both have ticked)."""
+        if self._atm is None or T <= 0:
+            return None
+        ce = pe = None
+        for q in self._quotes.values():
+            if q.instrument.strike == self._atm and q.ltp > 0:
+                if q.instrument.option_type is OptionType.CE:
+                    ce = float(q.ltp)
+                else:
+                    pe = float(q.ltp)
+        if ce is None or pe is None:
+            return None
+        return implied_forward(ce, pe, float(self._atm), r, T)
+
+    def _greeks_for_tick(self, inst: Instrument, tick: Tick) -> Greeks | None:
+        """Greeks for the just-ticked option; None whenever any input is unavailable."""
+        try:
+            if tick.ltp is None or tick.ltp <= 0:
+                return None
+            r = float(self._settings.risk_free_rate)
+            T = year_fraction(tick.timestamp, inst.expiry)
+            F = self._atm_forward(r, T)
+            if F is None:
+                return None
+            return compute_greeks(float(tick.ltp), F, float(inst.strike), r, T, inst.option_type)
+        except Exception:  # noqa: BLE001 - greeks must never break the feed loop
+            log.warning("greeks_compute_failed", token=tick.instrument_token)
+            return None
+
     # -- Option quotes -----------------------------------------------------------------
 
     def on_option_tick(self, tick: Tick) -> None:
         inst = self._chain.get(tick.instrument_token)
         if inst is None:
             return  # not a chain contract we're tracking
+        greeks = self._greeks_for_tick(inst, tick)
         self._quotes[tick.instrument_token] = ChainQuote(
-            instrument=inst, oi=tick.oi, ltp=tick.ltp, volume=tick.volume
+            instrument=inst, oi=tick.oi, ltp=tick.ltp, volume=tick.volume, greeks=greeks
         )
         # volume-weighted VWAP by per-tick volume delta (fallback: equal weight)
         weight: Decimal | None = None
@@ -118,6 +151,11 @@ class OptionChainManager:
                     "oi": tick.oi, "ltp": str(tick.ltp), "volume": tick.volume,
                     "vwap": str(vwap.value) if vwap.value is not None else None,
                     "expiry": inst.expiry,
+                    "iv": str(greeks.iv) if greeks else None,
+                    "delta": str(greeks.delta) if greeks else None,
+                    "gamma": str(greeks.gamma) if greeks else None,
+                    "theta": str(greeks.theta) if greeks else None,
+                    "vega": str(greeks.vega) if greeks else None,
                     "timestamp": tick.timestamp,
                 }
             )
@@ -146,6 +184,10 @@ class OptionChainManager:
     def vwap_for(self, instrument_token: str) -> Decimal | None:
         v = self._vwap.get(instrument_token)
         return v.value if v else None
+
+    def greeks_for(self, instrument_token: str) -> Greeks | None:
+        q = self._quotes.get(instrument_token)
+        return q.greeks if q else None
 
     def reset_session(self) -> None:
         for v in self._vwap.values():
