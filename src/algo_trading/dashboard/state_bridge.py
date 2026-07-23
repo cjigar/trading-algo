@@ -121,6 +121,13 @@ class StateBridge:
         """The live broker trade report from the last account refresh (raw broker dicts)."""
         return self._repo.latest_broker_trades()
 
+    def live_quotes_for(self, tokens: list[str]) -> dict[str, Decimal]:
+        """Fresh live LTPs for the given instrument tokens (stale ones dropped), for M2M marking."""
+        tokens = [t for t in tokens if t]
+        if not tokens:
+            return {}
+        return self._repo.live_quotes(tokens, max_age_seconds=self._quote_max_age)
+
     # -- Control commands (consumed by the orchestrator) -------------------------------
 
     def send_start(self) -> None:

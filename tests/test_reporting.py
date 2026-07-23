@@ -188,3 +188,45 @@ def test_broker_positions_handles_blank_fields():
     s = summarize_broker_positions([{"trdSym": "X", "flBuyQty": "", "flSellQty": "",
                                      "buyAmt": "", "sellAmt": ""}])
     assert s.total_realized == Decimal("0") and s.open_count == 0
+
+
+def test_broker_positions_live_m2m_marks_open_short():
+    # Open short 200 @156.62 avg; buyback LTP 150 -> unrealized +6.62*200 = 1324.
+    rows = [{"trdSym": "SENSEX77500PE", "tok": "835470", "flBuyQty": "0", "flSellQty": "200",
+             "buyAmt": "0.00", "sellAmt": "31324.00"}]
+    s = summarize_broker_positions(rows, {"835470": Decimal("150")})
+    p = s.per_position[0]
+    # (sellAmt - buyAmt) + net*ltp = 31324 + (-200)*150 = 1324
+    assert p.total_pnl == Decimal("1324.00")
+    assert p.ltp == Decimal("150") and not p.mtm_pending
+    assert s.total_pnl == Decimal("1324.00")
+    assert s.total_realized == Decimal("0")  # nothing squared yet
+    assert s.mtm_pending_count == 0
+
+
+def test_broker_positions_live_m2m_marks_open_long():
+    # Open long 100 @100 avg; LTP 130 -> unrealized +30*100 = 3000.
+    rows = [{"trdSym": "X", "tok": "t1", "flBuyQty": "100", "flSellQty": "0",
+             "buyAmt": "10000.00", "sellAmt": "0.00"}]
+    s = summarize_broker_positions(rows, {"t1": Decimal("130")})
+    # (0 - 10000) + 100*130 = 3000
+    assert s.per_position[0].total_pnl == Decimal("3000.00")
+
+
+def test_broker_positions_squared_needs_no_quote():
+    rows = [{"trdSym": "S", "tok": "t2", "flBuyQty": "200", "flSellQty": "200",
+             "buyAmt": "36662.00", "sellAmt": "37917.00"}]
+    s = summarize_broker_positions(rows, {})  # no quote
+    p = s.per_position[0]
+    assert p.total_pnl == Decimal("1255.00") == p.realized_pnl  # sell-buy, no MTM term
+    assert not p.mtm_pending and p.ltp is None
+
+
+def test_broker_positions_open_without_quote_is_pending():
+    rows = [{"trdSym": "P", "tok": "t3", "flBuyQty": "0", "flSellQty": "200",
+             "buyAmt": "0.00", "sellAmt": "31324.00"}]
+    s = summarize_broker_positions(rows, {})  # open, unpriced
+    p = s.per_position[0]
+    assert p.mtm_pending and p.ltp is None
+    assert p.total_pnl == p.realized_pnl == Decimal("0")  # falls back to realized
+    assert s.mtm_pending_count == 1

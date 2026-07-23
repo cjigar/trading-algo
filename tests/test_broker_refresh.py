@@ -3,6 +3,8 @@ fail-safe per endpoint, and the broker-trades store + schema round-trip cleanly.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pandas as pd
 import pytest
 
@@ -12,6 +14,16 @@ from algo_trading.domain.enums import ExchangeSegment, TradingMode
 from algo_trading.execution.paper_broker import PaperBroker
 from algo_trading.instruments.scrip_master import ScripMaster
 from algo_trading.persistence.repositories import Repository
+
+
+class FakeCoord:
+    """Records feed subscriptions instead of touching a websocket."""
+
+    def __init__(self) -> None:
+        self.subscribed: list[tuple] = []
+
+    def subscribe_option(self, token, segment) -> None:
+        self.subscribed.append((token, segment))
 
 # Raw Kotak-style report rows (camelCase, as the SDK returns them).
 RAW_POSITIONS = [
@@ -60,7 +72,8 @@ def _orch(scrip, engine, broker):
 def test_refresh_populates_all_three_stores(scrip, engine):
     orch = _orch(scrip, engine, AccountBroker())
     summary = orch.refresh_broker_account()
-    assert summary == {"positions": 1, "orders": 2, "trades": 1}
+    # RAW_POSITIONS is squared (net 0) so nothing is marked for M2M this cycle.
+    assert summary == {"positions": 1, "orders": 2, "trades": 1, "marked": 0}
 
     repo = Repository(engine)
     assert {p["trdSym"] for p in repo.latest_broker_positions()} == {"SENSEX24500CE"}
@@ -117,3 +130,78 @@ def test_broker_refresh_seconds_setting_and_editable():
     s = get_settings(reload=True)
     assert s.broker_refresh_seconds == 5
     assert "broker_refresh_seconds" in EDITABLE_FIELDS
+
+
+# -- Live M2M: subscribe open-position tokens + publish their LTPs --------------------
+
+OPEN_POSITIONS = [
+    # open short option (priced below) — should subscribe on bse_fo and publish
+    {"trdSym": "SENSEX77500PE", "tok": "835470", "exSeg": "bse_fo",
+     "flBuyQty": "0", "flSellQty": "200", "buyAmt": "0", "sellAmt": "31324"},
+    # open long equity — should subscribe on nse_cm (whole-account coverage), no tick yet
+    {"trdSym": "CRAMC-EQ", "tok": "999", "exSeg": "nse_cm",
+     "flBuyQty": "10", "flSellQty": "0", "buyAmt": "2660", "sellAmt": "0"},
+    # squared — no subscription, no quote needed
+    {"trdSym": "SQUARED", "tok": "111", "exSeg": "bse_fo",
+     "flBuyQty": "50", "flSellQty": "50", "buyAmt": "100", "sellAmt": "120"},
+]
+
+
+def _open_broker():
+    class OpenBroker(PaperBroker):
+        def positions(self):
+            return OPEN_POSITIONS
+
+        def order_report(self):
+            return []
+
+        def trade_report(self):
+            return []
+
+    return OpenBroker()
+
+
+def test_refresh_subscribes_open_tokens_and_publishes_priced_quotes(scrip, engine):
+    orch = _orch(scrip, engine, _open_broker())
+    coord = FakeCoord()
+    orch._coordinator = coord
+    orch._ltp["835470"] = Decimal("150")  # option has a live tick; equity 999 does not yet
+
+    orch.refresh_broker_account()
+
+    subbed = dict(coord.subscribed)
+    # open option (bse_fo) + open equity (nse_cm) subscribed; squared token is not
+    assert subbed == {"835470": ExchangeSegment.BSE_FO, "999": ExchangeSegment.NSE_CM}
+    assert "111" not in subbed
+    # only the token with a live LTP is published to live_quotes
+    assert Repository(engine).live_quotes(["835470", "999", "111"]) == {"835470": Decimal("150")}
+
+
+def test_refresh_subscribes_each_token_once(scrip, engine):
+    orch = _orch(scrip, engine, _open_broker())
+    coord = FakeCoord()
+    orch._coordinator = coord
+    orch.refresh_broker_account()
+    orch.refresh_broker_account()  # second cycle must not resubscribe
+    assert len(coord.subscribed) == 2  # still just the two open tokens
+
+
+def test_refresh_bad_segment_is_fail_safe(scrip, engine):
+    bad = [{"trdSym": "X", "tok": "5", "exSeg": "bogus_seg",
+            "flBuyQty": "0", "flSellQty": "10", "buyAmt": "0", "sellAmt": "100"}]
+
+    class B(PaperBroker):
+        def positions(self):
+            return bad
+
+        def order_report(self):
+            return []
+
+        def trade_report(self):
+            return []
+
+    orch = _orch(scrip, engine, B())
+    orch._coordinator = FakeCoord()
+    # invalid exchange segment must not raise out of the poller
+    summary = orch.refresh_broker_account()
+    assert summary["marked"] == 0

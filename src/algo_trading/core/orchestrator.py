@@ -18,7 +18,7 @@ from algo_trading.broker.base import BrokerClient
 from algo_trading.config.secrets import KotakSecrets, load_secrets
 from algo_trading.config.settings import Settings, get_settings
 from algo_trading.core.events import EventBus, Topic
-from algo_trading.domain.enums import AlgoState, Side, TradingMode, Underlying
+from algo_trading.domain.enums import AlgoState, ExchangeSegment, Side, TradingMode, Underlying
 from algo_trading.domain.models import OrderEvent, Signal, Tick, Trade
 from algo_trading.execution.exit_manager import ExitManager
 from algo_trading.execution.order_manager import OrderManager
@@ -64,6 +64,7 @@ class Orchestrator:
         self._neo_client = neo_client  # authenticated Kotak client (live mode)
         self._coordinator: Any = None  # LiveFeedCoordinator, set by attach_live_feeds()
         self._last_feed_recovery: float | None = None  # monotonic ts of the last stale-feed reconnect
+        self._broker_marked_tokens: set[str] = set()  # broker-position tokens subscribed for M2M pricing
         self._bus = EventBus()
         self._ltp: dict[str, Decimal] = {}  # instrument_token -> last ltp
         self._underlying_token: dict[str, Underlying] = {}  # index token -> underlying
@@ -290,13 +291,19 @@ class Orchestrator:
         """
         from algo_trading.broker.report_normalize import normalize_order_row
 
-        summary = {"positions": 0, "orders": 0, "trades": 0}
+        summary = {"positions": 0, "orders": 0, "trades": 0, "marked": 0}
 
+        positions: list[dict] = []
         try:
             positions = self._broker.positions()
             summary["positions"] = self._repo.replace_broker_positions(positions)
         except Exception:  # noqa: BLE001 - a broker/persist failure must not stall the poller
             log.exception("broker_positions_refresh_failed")
+
+        try:
+            summary["marked"] = self._mark_open_positions(positions)
+        except Exception:  # noqa: BLE001
+            log.exception("broker_positions_mark_failed")
 
         try:
             report = self._broker.order_report()
@@ -315,6 +322,41 @@ class Orchestrator:
             log.exception("broker_trades_refresh_failed")
 
         return summary
+
+    def _mark_open_positions(self, positions: list[dict]) -> int:
+        """Price the account's open positions in realtime for live M2M.
+
+        For each open broker position (net qty != 0), subscribe its instrument to the live quote
+        feed once (works for options and equity — the raw ``exSeg`` matches an ``ExchangeSegment``
+        value) and publish whatever LTP the feed has to ``live_quotes``, where the P&L read path
+        marks it. Newly-subscribed tokens have no tick yet on the first cycle; they price in on the
+        next. Squared positions need no quote. Returns the number of tokens priced this cycle."""
+        quotes: dict[str, Decimal] = {}
+        for p in positions:
+            try:
+                net = int(Decimal(str(p.get("flBuyQty") or 0))) - int(
+                    Decimal(str(p.get("flSellQty") or 0))
+                )
+            except (ValueError, ArithmeticError):
+                continue
+            token = str(p.get("tok", ""))
+            if net == 0 or not token:
+                continue
+            if token not in self._broker_marked_tokens and self._coordinator is not None:
+                try:
+                    self._coordinator.subscribe_option(
+                        token, ExchangeSegment(str(p.get("exSeg", "")).lower())
+                    )
+                    self._broker_marked_tokens.add(token)
+                except Exception:  # noqa: BLE001 - an unknown segment / feed hiccup must not stall
+                    log.warning("broker_position_subscribe_failed",
+                                token=token, seg=p.get("exSeg"))
+            ltp = self._ltp.get(token)
+            if ltp is not None:
+                quotes[token] = ltp
+        if quotes:
+            self._repo.upsert_live_quotes(quotes)
+        return len(quotes)
 
     @property
     def is_oi_mode(self) -> bool:

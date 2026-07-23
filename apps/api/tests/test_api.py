@@ -207,3 +207,17 @@ def test_broker_trades_endpoint(client, auth, repo):
     assert r.status_code == 200
     body = r.json()
     assert any(row["symbol"] == "SENSEX24500CE" and row["quantity"] == 20 for row in body)
+
+
+def test_broker_pnl_live_m2m(client, auth, repo):
+    # Open short 200 @avg 156.62; live LTP 150 -> M2M = (31324-0) + (-200*150) = 1324.
+    repo.replace_broker_positions([
+        {"trdSym": "SENSEX77500PE", "tok": "835470", "flBuyQty": "0", "flSellQty": "200",
+         "buyAmt": "0", "sellAmt": "31324"},
+    ])
+    repo.upsert_live_quotes({"835470": Decimal("150")})
+    body = client.get("/api/broker-pnl", headers=auth).json()
+    assert body["total_pnl"] == 1324.0
+    assert body["mtm_pending_count"] == 0
+    pos = next(p for p in body["per_position"] if p["symbol"] == "SENSEX77500PE")
+    assert pos["total_pnl"] == 1324.0 and pos["ltp"] == 150.0 and pos["mtm_pending"] is False

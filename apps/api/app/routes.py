@@ -100,8 +100,10 @@ def get_broker_trades(bridge: StateBridge = Depends(get_bridge)):
 
 @api.get("/broker-pnl", response_model=BrokerPnLOut)
 def get_broker_pnl(bridge: StateBridge = Depends(get_bridge)):
-    """Realized day P&L computed from the captured broker positions (matched-qty method)."""
-    return broker_pnl_out(bridge.broker_positions())
+    """Live account M2M P&L: broker positions marked at live LTPs (realized + unrealized)."""
+    rows = bridge.broker_positions()
+    quotes = bridge.live_quotes_for([str(r.get("tok", "")) for r in rows])
+    return broker_pnl_out(rows, quotes)
 
 
 def _chain_out_with_trends(bridge: StateBridge, settings: Settings, underlying: str | None) -> ChainOut:
@@ -184,12 +186,13 @@ def build_stream_payload() -> dict[str, Any]:
     active = settings.active_underlying_for_today()
     u = active.value if active else None
     broker_positions = bridge.broker_positions()
+    broker_quotes = bridge.live_quotes_for([str(r.get("tok", "")) for r in broker_positions])
     return {
         "state": state_out(settings, state).model_dump(),
         "pnl": pnl_out(state).model_dump(),
         "positions": [p.model_dump() for p in positions_out(state)],
         "orders": [o.model_dump() for o in orders_out(state)],
-        "broker_pnl": broker_pnl_out(broker_positions).model_dump(),
+        "broker_pnl": broker_pnl_out(broker_positions, broker_quotes).model_dump(),
         "broker_positions": broker_positions,
         "broker_trades": [t.model_dump() for t in broker_trades_out(bridge.broker_trades())],
         "chain": _chain_out_with_trends(bridge, settings, u).model_dump(),

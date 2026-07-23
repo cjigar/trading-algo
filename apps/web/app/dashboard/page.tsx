@@ -90,19 +90,16 @@ export default function Dashboard() {
         <div className="space-y-6">
           {brokerPnl && (
             <div className="space-y-2">
-              <h2 className="text-sm font-medium text-neutral-300">Broker account P&amp;L (live)</h2>
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-                <Metric
-                  label="Realized P&L (today)"
-                  value={<span className={brokerPnl.total_realized >= 0 ? "text-emerald-400" : "text-red-400"}>
-                    ₹{brokerPnl.total_realized.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                  </span>}
-                />
+              <h2 className="text-sm font-medium text-neutral-300">Broker account P&amp;L (live M2M)</h2>
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <Metric label="Live M2M (P&L)" value={<Signed value={brokerPnl.total_pnl} />} />
+                <Metric label="Realized (booked)" value={<Signed value={brokerPnl.total_realized} />} />
                 <Metric label="Open positions" value={brokerPnl.open_count} />
                 <Metric label="Positions (total)" value={brokerPnl.per_position.length} />
               </div>
               <p className="text-xs text-neutral-500">
-                Realized on squared (matched) quantity, from the broker snapshot at last reconcile. Open positions&apos; unrealized MTM is not included (needs live LTP).
+                Live account M2M: open positions marked at the broker&apos;s live LTP (realized + unrealized).
+                {brokerPnl.mtm_pending_count > 0 && ` ${brokerPnl.mtm_pending_count} position(s) awaiting a live quote (shown at realized only).`}
               </p>
               <BrokerPnLTable pnl={brokerPnl} />
             </div>
@@ -251,7 +248,9 @@ function BrokerPnLTable({ pnl }: { pnl: BrokerPnL }) {
             <th className="px-3 py-2">Net qty</th>
             <th className="px-3 py-2">Avg buy</th>
             <th className="px-3 py-2">Avg sell</th>
-            <th className="px-3 py-2">Realized P&amp;L</th>
+            <th className="px-3 py-2">LTP</th>
+            <th className="px-3 py-2">Live P&amp;L (M2M)</th>
+            <th className="px-3 py-2">Realized</th>
             <th className="px-3 py-2 text-center">State</th>
           </tr>
         </thead>
@@ -262,7 +261,12 @@ function BrokerPnLTable({ pnl }: { pnl: BrokerPnL }) {
               <td className="px-3 py-1.5">{p.net_qty}</td>
               <td className="px-3 py-1.5">{p.avg_buy.toFixed(2)}</td>
               <td className="px-3 py-1.5">{p.avg_sell.toFixed(2)}</td>
-              <td className={`px-3 py-1.5 ${p.realized_pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+              <td className="px-3 py-1.5 text-neutral-300">{p.ltp != null ? p.ltp.toFixed(2) : "—"}</td>
+              <td className={`px-3 py-1.5 ${p.total_pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                ₹{p.total_pnl.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                {p.mtm_pending && <span className="ml-1 text-[10px] text-amber-400" title="Awaiting live quote — shown at realized only">MTM?</span>}
+              </td>
+              <td className={`px-3 py-1.5 ${p.realized_pnl >= 0 ? "text-neutral-400" : "text-neutral-400"}`}>
                 ₹{p.realized_pnl.toLocaleString(undefined, { maximumFractionDigits: 2 })}
               </td>
               <td className="px-3 py-1.5 text-center">

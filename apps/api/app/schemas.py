@@ -214,22 +214,30 @@ class BrokerPositionPnLOut(BaseModel):
     avg_sell: float
     realized_pnl: float
     is_open: bool
+    total_pnl: float  # live M2M for this position (realized + unrealized at ltp)
+    ltp: float | None = None  # price the open net qty is marked at (null if unpriced)
+    mtm_pending: bool = False  # open position awaiting a live quote
 
 
 class BrokerPnLOut(BaseModel):
-    total_realized: float  # realized on matched (squared) qty; excludes open-position MTM
+    total_realized: float  # realized on matched (squared) qty
+    total_pnl: float  # account live M2M (realized + unrealized) — matches the Kotak app
     open_count: int
+    mtm_pending_count: int  # open positions still awaiting a live quote
     per_position: list[BrokerPositionPnLOut]
 
 
-def broker_pnl_out(rows: list[dict]) -> BrokerPnLOut:
-    s = summarize_broker_positions(rows)
+def broker_pnl_out(rows: list[dict], quotes: dict[str, Decimal] | None = None) -> BrokerPnLOut:
+    s = summarize_broker_positions(rows, quotes)
     return BrokerPnLOut(
-        total_realized=float(s.total_realized), open_count=s.open_count,
+        total_realized=float(s.total_realized), total_pnl=float(s.total_pnl),
+        open_count=s.open_count, mtm_pending_count=s.mtm_pending_count,
         per_position=[BrokerPositionPnLOut(
             symbol=p.symbol, net_qty=p.net_qty, buy_qty=p.buy_qty, sell_qty=p.sell_qty,
             avg_buy=float(p.avg_buy), avg_sell=float(p.avg_sell),
             realized_pnl=float(p.realized_pnl), is_open=p.is_open,
+            total_pnl=float(p.total_pnl), ltp=float(p.ltp) if p.ltp is not None else None,
+            mtm_pending=p.mtm_pending,
         ) for p in s.per_position],
     )
 

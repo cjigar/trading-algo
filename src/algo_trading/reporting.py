@@ -196,13 +196,18 @@ class BrokerPositionPnL:
     avg_sell: Decimal
     realized_pnl: Decimal  # matched-qty realized (avg_sell - avg_buy) * matched
     is_open: bool
+    ltp: Decimal | None = None  # live price the open net qty is marked at (None if unpriced)
+    total_pnl: Decimal = Decimal(0)  # live M2M = (sell_val - buy_val) + net*ltp (== realized if flat)
+    mtm_pending: bool = False  # open but no live quote yet -> total_pnl falls back to realized
 
 
 @dataclass(frozen=True)
 class BrokerPnLSummary:
     per_position: list[BrokerPositionPnL]
-    total_realized: Decimal
+    total_realized: Decimal  # realized on squared qty only
+    total_pnl: Decimal  # account live M2M (realized + unrealized) — matches the Kotak app
     open_count: int
+    mtm_pending_count: int = 0  # open positions still awaiting a live quote
 
 
 def _to_int(v: object) -> int:
@@ -212,14 +217,25 @@ def _to_int(v: object) -> int:
         return 0
 
 
-def summarize_broker_positions(rows: list[dict]) -> BrokerPnLSummary:
-    """Realized day P&L per broker position via matched-qty (avg-price) matching, from the raw
-    Kotak position fields (flBuyQty/flSellQty filled quantities, buyAmt/sellAmt rupee values).
+def summarize_broker_positions(
+    rows: list[dict], quotes: dict[str, Decimal] | None = None
+) -> BrokerPnLSummary:
+    """Live M2M P&L per broker position, from the raw Kotak position fields (flBuyQty/flSellQty
+    filled quantities, buyAmt/sellAmt rupee values, tok instrument token).
 
-    Realized on the matched (squared) quantity is exact. Any net_qty is still open — its
-    unrealized MTM needs a live LTP and is NOT included here."""
+    Marks the open net quantity at a live LTP so the total matches the Kotak app's account M2M:
+
+        total_pnl = (sell_val - buy_val) + net_qty * ltp
+
+    For a squared position (net==0) this reduces to ``sell_val - buy_val`` (== realized), so no quote
+    is needed. An open position with no quote falls back to realized-only and is flagged
+    ``mtm_pending`` rather than shown as a confident (wrong) number. ``quotes`` maps instrument
+    token -> LTP (from the live feed)."""
+    quotes = quotes or {}
     out: list[BrokerPositionPnL] = []
-    total = Decimal(0)
+    total_realized = Decimal(0)
+    total_pnl = Decimal(0)
+    pending = 0
     for r in rows:
         bq = _to_int(r.get("flBuyQty"))
         sq = _to_int(r.get("flSellQty"))
@@ -228,19 +244,31 @@ def summarize_broker_positions(rows: list[dict]) -> BrokerPnLSummary:
         avg_buy, avg_sell = _avg(buy_val, bq), _avg(sell_val, sq)
         matched = min(bq, sq)
         realized = Decimal(matched) * (avg_sell - avg_buy)
-        total += realized
         net = bq - sq
+        ltp = quotes.get(str(r.get("tok", "")))
+        if net == 0:
+            total, used_ltp, mtm_pending = sell_val - buy_val, None, False
+        elif ltp is not None:
+            total, used_ltp, mtm_pending = (sell_val - buy_val) + Decimal(net) * ltp, ltp, False
+        else:
+            total, used_ltp, mtm_pending = realized, None, True
+            pending += 1
+        total_realized += realized
+        total_pnl += total
         out.append(
             BrokerPositionPnL(
                 symbol=str(r.get("trdSym", "")), net_qty=net, buy_qty=bq, sell_qty=sq,
                 avg_buy=avg_buy, avg_sell=avg_sell, realized_pnl=realized, is_open=net != 0,
+                ltp=used_ltp, total_pnl=total, mtm_pending=mtm_pending,
             )
         )
-    out.sort(key=lambda p: p.realized_pnl)
+    out.sort(key=lambda p: p.total_pnl)
     return BrokerPnLSummary(
         per_position=out,
-        total_realized=total,
+        total_realized=total_realized,
+        total_pnl=total_pnl,
         open_count=sum(1 for p in out if p.is_open),
+        mtm_pending_count=pending,
     )
 
 
