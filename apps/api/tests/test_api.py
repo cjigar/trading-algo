@@ -56,6 +56,22 @@ def test_state_spots_carry_day_change(client, auth, repo):
     assert spots["NIFTY"]["stale"] is False
 
 
+def test_state_spots_carry_futures_ltp(client, auth, repo):
+    repo.upsert_index_spots({"NIFTY": Decimal("23912")}, futures={"NIFTY": Decimal("23948")})
+    body = client.get("/api/state", headers=auth).json()
+    spot = {s["underlying"]: s for s in body["spots"]}["NIFTY"]
+    assert spot["fut_ltp"] == 23948.0
+    assert spot["fut_stale"] is False
+
+
+def test_state_spot_without_futures_reports_null(client, auth, repo):
+    # A dedicated underlying no other test seeds, so the shared DB can't leave it a futures value.
+    repo.upsert_index_spots({"ZZTEST": Decimal("100")})  # spot only, no futures tick
+    body = client.get("/api/state", headers=auth).json()
+    spot = {s["underlying"]: s for s in body["spots"]}["ZZTEST"]
+    assert spot["fut_ltp"] is None and spot["fut_stale"] is True
+
+
 def test_spot_out_falls_back_to_day_open_without_prev_close():
     # Day one (no prior-day close) -> baseline is the day's first spot, not a crash.
     from datetime import datetime as _dt

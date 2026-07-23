@@ -27,12 +27,18 @@ class OptionType(str, Enum):
 
 class Underlying(str, Enum):
     NIFTY = "NIFTY"
+    BANKNIFTY = "BANKNIFTY"
     SENSEX = "SENSEX"
 
 
+# NIFTY and BANKNIFTY are NSE indices; SENSEX is BSE. Only SENSEX lives on BSE, so the maps
+# below list it explicitly and default everything else to NSE.
+_BSE_UNDERLYINGS = frozenset({Underlying.SENSEX})
+
+
 class ExchangeSegment(str, Enum):
-    """Kotak Neo exchange segments. NIFTY options trade on NSE F&O, SENSEX on BSE F&O;
-    the underlying index spot LTP is quoted on the cash segments (nse_cm / bse_cm)."""
+    """Kotak Neo exchange segments. NIFTY/BANKNIFTY F&O trade on NSE, SENSEX on BSE; the
+    underlying index spot LTP is quoted on the cash segments (nse_cm / bse_cm)."""
 
     NSE_FO = "nse_fo"
     BSE_FO = "bse_fo"
@@ -41,12 +47,12 @@ class ExchangeSegment(str, Enum):
 
     @classmethod
     def for_underlying(cls, underlying: Underlying) -> ExchangeSegment:
-        return cls.NSE_FO if underlying is Underlying.NIFTY else cls.BSE_FO
+        return cls.BSE_FO if underlying in _BSE_UNDERLYINGS else cls.NSE_FO
 
     @classmethod
     def index_for_underlying(cls, underlying: Underlying) -> ExchangeSegment:
         """Cash segment on which the underlying's index spot LTP is quoted."""
-        return cls.NSE_CM if underlying is Underlying.NIFTY else cls.BSE_CM
+        return cls.BSE_CM if underlying in _BSE_UNDERLYINGS else cls.NSE_CM
 
 
 class ProductType(str, Enum):

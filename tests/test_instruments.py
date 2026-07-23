@@ -74,6 +74,87 @@ def test_from_dataframe_fails_closed_when_no_options():
         ScripMaster.from_dataframe(df, ExchangeSegment.NSE_FO)
 
 
+def _future_row(symbol, token, expiry, name="NIFTY", kind="FUTIDX"):
+    return {"pTrdSymbol": symbol, "pSymbol": token, "pSymbolName": name,
+            "pExpiryDate": expiry, "dStrikePrice": 0, "pOptionType": "XX",
+            "pInstType": kind, "lLotSize": 75}
+
+
+def _option_row(symbol="NIFTY25JAN23000CE", token="1", name="NIFTY", opt="CE"):
+    return {"pTrdSymbol": symbol, "pSymbol": token, "pSymbolName": name,
+            "pExpiryDate": "2025-01-30", "dStrikePrice": 23000, "pOptionType": opt,
+            "pInstType": "OPTIDX", "lLotSize": 75}
+
+
+def test_from_dataframe_captures_futures_alongside_options():
+    df = pd.DataFrame([
+        _option_row(),
+        _future_row("NIFTY25JANFUT", "113", "2025-01-30"),
+    ])
+    sm = ScripMaster.from_dataframe(df, ExchangeSegment.NSE_FO)
+    assert len(sm) == 1  # options only in the tradeable table
+    assert len(sm.futures) == 1
+    fut = sm.futures[0]
+    assert fut.underlying is Underlying.NIFTY and fut.expiry == date(2025, 1, 30)
+    assert fut.instrument_token == "113"
+
+
+def test_near_month_future_picks_nearest_non_expired_and_rolls():
+    df = pd.DataFrame([
+        _option_row(),
+        _future_row("NIFTY25JANFUT", "1", "2025-01-30"),
+        _future_row("NIFTY25FEBFUT", "2", "2025-02-27"),
+        _future_row("NIFTY25MARFUT", "3", "2025-03-27"),
+    ])
+    sm = ScripMaster.from_dataframe(df, ExchangeSegment.NSE_FO)
+    # Before the Jan expiry, the front month is Jan.
+    assert sm.near_month_future(Underlying.NIFTY, today=date(2025, 1, 15)).instrument_token == "1"
+    # On expiry day the contract is still valid.
+    assert sm.near_month_future(Underlying.NIFTY, today=date(2025, 1, 30)).instrument_token == "1"
+    # After Jan expires it rolls to Feb.
+    assert sm.near_month_future(Underlying.NIFTY, today=date(2025, 2, 1)).instrument_token == "2"
+    # Past every expiry -> nothing.
+    assert sm.near_month_future(Underlying.NIFTY, today=date(2025, 12, 1)) is None
+
+
+def test_near_month_future_none_when_no_futures_parsed():
+    sm = ScripMaster.from_dataframe(pd.DataFrame([_option_row()]), ExchangeSegment.NSE_FO)
+    assert sm.near_month_future(Underlying.NIFTY) is None
+
+
+def test_exchange_segments_for_all_three_underlyings():
+    # NIFTY and BANKNIFTY are NSE; only SENSEX is BSE.
+    assert ExchangeSegment.for_underlying(Underlying.NIFTY) is ExchangeSegment.NSE_FO
+    assert ExchangeSegment.for_underlying(Underlying.BANKNIFTY) is ExchangeSegment.NSE_FO
+    assert ExchangeSegment.for_underlying(Underlying.SENSEX) is ExchangeSegment.BSE_FO
+    assert ExchangeSegment.index_for_underlying(Underlying.NIFTY) is ExchangeSegment.NSE_CM
+    assert ExchangeSegment.index_for_underlying(Underlying.BANKNIFTY) is ExchangeSegment.NSE_CM
+    assert ExchangeSegment.index_for_underlying(Underlying.SENSEX) is ExchangeSegment.BSE_CM
+
+
+def test_index_token_for_resolves_each_underlying():
+    from algo_trading.config.settings import Settings
+
+    s = Settings(nifty_index_token="N1", banknifty_index_token="B1", sensex_index_token="S1")
+    assert s.index_token_for(Underlying.NIFTY) == "N1"
+    assert s.index_token_for(Underlying.BANKNIFTY) == "B1"
+    assert s.index_token_for(Underlying.SENSEX) == "S1"
+
+
+def test_banknifty_rows_classify_as_banknifty_not_nifty():
+    df = pd.DataFrame([
+        _option_row(symbol="BANKNIFTY25JAN51000CE", name="BANKNIFTY"),
+        _future_row("BANKNIFTY25JANFUT", "9", "2025-01-30", name="BANKNIFTY"),
+        _future_row("NIFTY25JANFUT", "10", "2025-01-30", name="NIFTY"),
+    ])
+    sm = ScripMaster.from_dataframe(df, ExchangeSegment.NSE_FO)
+    by_underlying = {f.underlying: f for f in sm.futures}
+    assert set(by_underlying) == {Underlying.BANKNIFTY, Underlying.NIFTY}
+    assert by_underlying[Underlying.BANKNIFTY].instrument_token == "9"
+    # The BankNifty option must not be misfiled under NIFTY (substring trap).
+    assert sm.for_underlying(Underlying.BANKNIFTY) and not sm.for_underlying(Underlying.NIFTY)
+
+
 def test_from_dataframe_missing_columns_raises():
     df = pd.DataFrame([{"foo": 1, "bar": 2}])
     with pytest.raises(ScripMasterError):

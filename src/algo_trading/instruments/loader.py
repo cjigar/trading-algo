@@ -20,9 +20,10 @@ log = get_logger("instruments.loader")
 
 def combine(masters: list[ScripMaster]) -> ScripMaster:
     instruments = [i for m in masters for i in m.instruments]
+    futures = [f for m in masters for f in m.futures]
     if not instruments:
         raise ScripMasterError("No instruments across scrip masters; failing closed.")
-    return ScripMaster(instruments)
+    return ScripMaster(instruments, futures)
 
 
 def required_segments(settings: Settings) -> list[ExchangeSegment]:

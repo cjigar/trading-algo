@@ -79,6 +79,7 @@ export const api = {
 export type IndexSpot = {
   underlying: string; ltp: number; day_open: number; prev_close: number;
   change: number; change_pct: number; age_seconds: number; stale: boolean;
+  fut_ltp: number | null; fut_stale: boolean;
 };
 export type AlgoState = {
   mode: string; live_armed: boolean; algo_state: string; strategy: string;

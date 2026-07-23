@@ -17,14 +17,16 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 from algo_trading.domain.enums import ExchangeSegment, OptionType, Underlying
-from algo_trading.domain.models import Instrument
+from algo_trading.domain.models import FutureContract, Instrument
 from algo_trading.observability.logging import get_logger
 
 log = get_logger("instruments.scrip_master")
+_IST = ZoneInfo("Asia/Kolkata")
 
 # our-field -> candidate source column names (checked in order, case-insensitive)
 COLUMN_CANDIDATES: dict[str, list[str]] = {
@@ -108,10 +110,14 @@ def default_expiry_parser(value: Any) -> date | None:
 
 
 class ScripMaster:
-    """An indexed table of tradeable option contracts for one or more segments."""
+    """An indexed table of tradeable option contracts (and index futures) for one or more
+    segments. Options drive trading; futures are parsed for display only (the rate ticker)."""
 
-    def __init__(self, instruments: list[Instrument]) -> None:
+    def __init__(
+        self, instruments: list[Instrument], futures: list[FutureContract] | None = None
+    ) -> None:
         self._instruments = instruments
+        self._futures = futures or []
 
     def __len__(self) -> int:
         return len(self._instruments)
@@ -119,6 +125,10 @@ class ScripMaster:
     @property
     def instruments(self) -> list[Instrument]:
         return list(self._instruments)
+
+    @property
+    def futures(self) -> list[FutureContract]:
+        return list(self._futures)
 
     # -- Construction ------------------------------------------------------------------
 
@@ -142,42 +152,62 @@ class ScripMaster:
                 f"Available: {list(df.columns)}. Update COLUMN_CANDIDATES."
             )
 
+        token_col = cols["instrument_token"] or cols["trading_symbol"]
+        kind_col = cols.get("instrument_kind")
+
         instruments: list[Instrument] = []
+        futures: list[FutureContract] = []
         for _, row in df.iterrows():
-            opt_raw = str(row[cols["option_type"]]).strip().upper()
-            if opt_raw not in ("CE", "PE"):
-                continue  # skip futures / non-option rows
-            expiry = expiry_parser(row[cols["expiry"]])
-            if expiry is None:
-                continue
-            try:
-                strike = Decimal(str(row[cols["strike"]])) * strike_scale
-            except (InvalidOperation, ValueError):
-                continue
+            symbol = str(row[cols["trading_symbol"]]).strip()
             underlying = cls._infer_underlying(
-                str(row[cols["underlying"]]) if cols["underlying"] else "",
-                str(row[cols["trading_symbol"]]),
+                str(row[cols["underlying"]]) if cols["underlying"] else "", symbol
             )
             if underlying is None:
                 continue
-            token_col = cols["instrument_token"] or cols["trading_symbol"]
-            instruments.append(
-                Instrument(
-                    underlying=underlying,
-                    exchange_segment=segment,
-                    trading_symbol=str(row[cols["trading_symbol"]]).strip(),
-                    instrument_token=str(row[token_col]).strip(),
-                    expiry=expiry,
-                    strike=strike,
-                    option_type=OptionType(opt_raw),
-                    lot_size=int(float(row[cols["lot_size"]])),
-                )
-            )
+            expiry = expiry_parser(row[cols["expiry"]])
+            if expiry is None:
+                continue
+            token = str(row[token_col]).strip()
+            try:
+                lot_size = int(float(row[cols["lot_size"]]))
+            except (ValueError, TypeError):
+                continue
 
+            opt_raw = str(row[cols["option_type"]]).strip().upper()
+            if opt_raw in ("CE", "PE"):
+                try:
+                    strike = Decimal(str(row[cols["strike"]])) * strike_scale
+                except (InvalidOperation, ValueError):
+                    continue
+                instruments.append(
+                    Instrument(
+                        underlying=underlying, exchange_segment=segment, trading_symbol=symbol,
+                        instrument_token=token, expiry=expiry, strike=strike,
+                        option_type=OptionType(opt_raw), lot_size=lot_size,
+                    )
+                )
+            elif cls._is_future_row(kind_col, row, opt_raw, symbol):
+                futures.append(
+                    FutureContract(
+                        underlying=underlying, exchange_segment=segment, trading_symbol=symbol,
+                        instrument_token=token, expiry=expiry, lot_size=lot_size,
+                    )
+                )
+
+        # Fail closed on options only — futures are display-only and their absence must never
+        # block trading.
         if not instruments:
             raise ScripMasterError(f"No option contracts parsed for {segment.value}; failing closed.")
-        log.info("scrip_master_parsed", segment=segment.value, count=len(instruments))
-        return cls(instruments)
+        log.info("scrip_master_parsed", segment=segment.value,
+                 count=len(instruments), futures=len(futures))
+        return cls(instruments, futures)
+
+    @staticmethod
+    def _is_future_row(kind_col: str | None, row: Any, opt_raw: str, symbol: str) -> bool:
+        """A futures row: an instrument-kind or symbol that names a future. The broker uses
+        ``FUTIDX`` for index futures; some feeds mark the option-type column ``XX``/``FUT``."""
+        kind = str(row[kind_col]).strip().upper() if kind_col is not None else ""
+        return "FUT" in kind or "FUT" in opt_raw or "FUT" in symbol.upper()
 
     # Kotak scrip-master strikes are in paise; scale to rupees for real downloads.
     KOTAK_STRIKE_SCALE = Decimal("0.01")
@@ -209,7 +239,9 @@ class ScripMaster:
         return cls.from_dataframe(df, segment, strike_scale=cls.KOTAK_STRIKE_SCALE)
 
     # Index-name fragments that are NOT plain NIFTY/SENSEX and must be excluded.
-    _NIFTY_EXCLUDE = ("BANK", "FIN", "MID", "NXT", "NEXT")
+    # Other NSE "NIFTY *" indices we do NOT trade/display, so a bare "NIFTY" match must exclude
+    # them. BANK is deliberately absent — BANKNIFTY is matched first, before this check.
+    _NIFTY_EXCLUDE = ("FIN", "MID", "NXT", "NEXT")
 
     @classmethod
     def _infer_underlying(cls, name: str, symbol: str) -> Underlying | None:
@@ -218,6 +250,9 @@ class ScripMaster:
             return None  # BSE BANKEX, not SENSEX
         if "SENSEX" in blob:
             return Underlying.SENSEX
+        # BankNifty before plain NIFTY: "BANKNIFTY" / "NIFTY BANK" both contain "NIFTY".
+        if "BANKNIFTY" in blob or "NIFTY BANK" in blob:
+            return Underlying.BANKNIFTY
         if "NIFTY" in blob and not any(x in blob for x in cls._NIFTY_EXCLUDE):
             return Underlying.NIFTY
         return None
@@ -226,6 +261,19 @@ class ScripMaster:
 
     def for_underlying(self, underlying: Underlying) -> list[Instrument]:
         return [i for i in self._instruments if i.underlying is underlying]
+
+    def near_month_future(
+        self, underlying: Underlying, today: date | None = None
+    ) -> FutureContract | None:
+        """The nearest non-expired futures contract for an underlying (None if none parsed).
+
+        Picks the smallest expiry >= today, so it rolls to the next contract automatically once
+        the front month expires. ``today`` defaults to the current IST trading date."""
+        ref = today or datetime.now(_IST).date()
+        candidates = [
+            f for f in self._futures if f.underlying is underlying and f.expiry >= ref
+        ]
+        return min(candidates, key=lambda f: f.expiry) if candidates else None
 
     def expiries(self, underlying: Underlying) -> list[date]:
         return sorted({i.expiry for i in self.for_underlying(underlying)})

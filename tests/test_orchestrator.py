@@ -105,6 +105,33 @@ def test_live_mode_without_confirmation_refuses(engine):
         Orchestrator(settings, scrip_master=sm, repo=Repository(engine))
 
 
+def test_write_index_spots_publishes_spot_and_futures(engine):
+    orch, _ = _build(engine)
+    orch.register_index_token(INDEX_TOKEN, Underlying.NIFTY)
+    # The near-month future is subscribed at attach; simulate its token→underlying mapping + a tick.
+    fut_token = "NIFTY-FUT-TOKEN"
+    orch._fut_token[fut_token] = Underlying.NIFTY
+    orch._ltp[INDEX_TOKEN] = Decimal("23800")
+    orch._ltp[fut_token] = Decimal("23845")
+
+    assert orch.write_index_spots() == 1
+
+    row = {r.underlying: r for r in Repository(engine).index_spots()}["NIFTY"]
+    assert row.ltp == "23800"
+    assert row.fut_ltp == "23845" and row.fut_updated_at is not None
+
+
+def test_write_index_spots_omits_futures_without_a_tick(engine):
+    orch, _ = _build(engine)
+    orch.register_index_token(INDEX_TOKEN, Underlying.NIFTY)
+    orch._ltp[INDEX_TOKEN] = Decimal("23800")  # spot only, no futures token/tick
+
+    orch.write_index_spots()
+
+    row = {r.underlying: r for r in Repository(engine).index_spots()}["NIFTY"]
+    assert row.fut_ltp == "0" and row.fut_updated_at is None
+
+
 @freeze_time("2025-01-27")
 def test_paper_pipeline_entry_and_exit(engine):
     orch, sm = _build(engine)

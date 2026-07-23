@@ -58,11 +58,13 @@ class Settings(BaseSettings):
     # NoDecode: skip pydantic-settings' JSON parsing so the comma-split validator below handles
     # values like "NIFTY,SENSEX".
     underlyings: Annotated[list[Underlying], NoDecode] = Field(
-        default_factory=lambda: [Underlying.NIFTY, Underlying.SENSEX]
+        default_factory=lambda: [Underlying.NIFTY, Underlying.BANKNIFTY, Underlying.SENSEX]
     )
     # Instrument tokens for the underlying INDEX spot LTP (from Kotak's index scrip list).
     # Required for the live quote feed to build candles — set before live/paper-with-feed runs.
+    # BANKNIFTY is feed/display-only (not in oi_underlyings), so its token only drives the ticker.
     nifty_index_token: str = ""
+    banknifty_index_token: str = ""
     sensex_index_token: str = ""
 
     # --- Strategy selection ---
@@ -216,9 +218,12 @@ class Settings(BaseSettings):
 
     def index_token_for(self, underlying: Underlying) -> str:
         """Configured index-spot instrument token for an underlying ('' if unset)."""
-        return (
-            self.nifty_index_token if underlying is Underlying.NIFTY else self.sensex_index_token
-        ).strip()
+        tokens = {
+            Underlying.NIFTY: self.nifty_index_token,
+            Underlying.BANKNIFTY: self.banknifty_index_token,
+            Underlying.SENSEX: self.sensex_index_token,
+        }
+        return tokens.get(underlying, "").strip()
 
     def strike_step_for(self, underlying: Underlying) -> Decimal:
         """Strike interval per underlying (NIFTY 50, SENSEX 100)."""

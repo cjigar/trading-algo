@@ -68,10 +68,12 @@ class Orchestrator:
         self._bus = EventBus()
         self._ltp: dict[str, Decimal] = {}  # instrument_token -> last ltp
         self._underlying_token: dict[str, Underlying] = {}  # index token -> underlying
+        self._fut_token: dict[str, Underlying] = {}  # near-month futures token -> underlying (ticker)
         self._lock = threading.RLock()
 
         self._repo: Repository = repo or Repository(create_engine_from_settings(self._settings))
 
+        self._scrip_master = scrip_master
         self._positions = PositionTracker()
         self._exits = ExitManager(self._settings)
         self._risk = RiskManager(self._settings, self._repo, self._positions)
@@ -209,6 +211,9 @@ class Orchestrator:
                 subscribed.append(u.value)
         coordinator.start()
         self._coordinator = coordinator
+        # Subscribe each underlying's near-month future so its live LTP feeds the rate ticker.
+        # Display-only: never traded, and failure here must not affect index/option feeds.
+        self._subscribe_index_futures()
         if not subscribed:
             log.warning("no_index_tokens_configured",
                         hint="set ALGO_NIFTY_INDEX_TOKEN / ALGO_SENSEX_INDEX_TOKEN")
@@ -267,19 +272,46 @@ class Orchestrator:
         }
         return self._repo.upsert_live_quotes(quotes)
 
-    def write_index_spots(self) -> int:
-        """Publish the current index spot per underlying for the dashboard rate ticker.
+    def _subscribe_index_futures(self) -> None:
+        """Resolve and subscribe each underlying's near-month future so its LTP feeds the ticker.
 
-        Uses the same live LTP the feed already stores in ``self._ltp``; both index feeds are
-        subscribed, so NIFTY and SENSEX are published regardless of which trades today. Returns
-        the number of underlyings written.
+        Display-only and fail-soft: a missing scrip master, an unresolved contract, or a bad
+        subscribe for one underlying must never disturb the index/option feeds the algo trades on.
+        """
+        if self._coordinator is None or self._scrip_master is None:
+            return
+        for u in self._settings.underlyings:
+            try:
+                fut = self._scrip_master.near_month_future(u)
+                if fut is None:
+                    log.info("index_future_unresolved", underlying=u.value)
+                    continue
+                self._fut_token[fut.instrument_token] = u
+                self._coordinator.subscribe_option(fut.instrument_token, fut.exchange_segment)
+                log.info("index_future_subscribed", underlying=u.value,
+                         symbol=fut.trading_symbol, expiry=str(fut.expiry))
+            except Exception:  # noqa: BLE001
+                log.exception("index_future_subscribe_failed", underlying=u.value)
+
+    def write_index_spots(self) -> int:
+        """Publish the current index spot (and near-month futures LTP) per underlying for the
+        dashboard rate ticker.
+
+        Uses the same live LTP the feed already stores in ``self._ltp``; the index feeds are all
+        subscribed, so every configured underlying is published regardless of which trades today.
+        Returns the number of underlyings written.
         """
         spots = {
             underlying.value: self._ltp[token]
             for token, underlying in self._underlying_token.items()
             if token in self._ltp
         }
-        return self._repo.upsert_index_spots(spots)
+        futures = {
+            underlying.value: self._ltp[token]
+            for token, underlying in self._fut_token.items()
+            if token in self._ltp
+        }
+        return self._repo.upsert_index_spots(spots, futures=futures)
 
     def refresh_broker_account(self) -> dict:
         """Poll the broker account (positions, orders, trades) and persist it for the dashboard.

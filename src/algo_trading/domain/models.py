@@ -39,6 +39,19 @@ class Instrument(_Frozen):
     lot_size: int
 
 
+class FutureContract(_Frozen):
+    """A resolved index-futures contract from the scrip master. Display-only: the dashboard
+    subscribes the near-month future's token to show its live LTP; it is never traded, so it
+    carries no strike/option_type (unlike :class:`Instrument`)."""
+
+    underlying: Underlying
+    exchange_segment: ExchangeSegment
+    trading_symbol: str
+    instrument_token: str
+    expiry: date
+    lot_size: int
+
+
 class Tick(_Frozen):
     """A normalized market-data update. ``oi``/``volume`` are populated for option quotes that
     carry them (the OI-selling strategy needs open interest); None when unavailable."""

@@ -144,6 +144,11 @@ class IndexSpotRow(SQLModel, table=True):
     day_open: str = "0"
     ltp: str = "0"
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    # Near-month index-futures LTP for the same underlying (display-only rate ticker). Its own
+    # timestamp so the futures line can go stale independently of the spot. "0"/unset until the
+    # futures feed ticks.
+    fut_ltp: str = "0"
+    fut_updated_at: datetime | None = None
 
 
 class AuditEventRow(SQLModel, table=True):

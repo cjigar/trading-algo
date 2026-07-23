@@ -115,6 +115,26 @@ def test_index_spots_empty_is_noop(repo: Repository):
     assert repo.index_spots() == []
 
 
+def test_index_spots_carry_futures_ltp(repo: Repository):
+    repo.upsert_index_spots(
+        {"NIFTY": Decimal("23800"), "SENSEX": Decimal("76000")},
+        futures={"NIFTY": Decimal("23850")},  # SENSEX has no futures tick yet
+    )
+    rows = {r.underlying: r for r in repo.index_spots()}
+    assert rows["NIFTY"].fut_ltp == "23850" and rows["NIFTY"].fut_updated_at is not None
+    # An underlying with no futures reading stays unset (renders as "—", not a frozen price).
+    assert rows["SENSEX"].fut_ltp == "0" and rows["SENSEX"].fut_updated_at is None
+
+
+def test_index_spots_missing_futures_tick_keeps_last_value(repo: Repository):
+    repo.upsert_index_spots({"NIFTY": Decimal("23800")}, futures={"NIFTY": Decimal("23850")})
+    # A later cycle with no futures reading must NOT blank the stored futures value.
+    repo.upsert_index_spots({"NIFTY": Decimal("23810")})
+    row = {r.underlying: r for r in repo.index_spots()}["NIFTY"]
+    assert row.ltp == "23810"  # spot advanced
+    assert row.fut_ltp == "23850" and row.fut_updated_at is not None  # futures preserved
+
+
 def test_prev_index_closes_picks_most_recent_prior_day(repo: Repository):
     from datetime import date
 

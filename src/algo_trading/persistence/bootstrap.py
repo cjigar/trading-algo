@@ -65,6 +65,7 @@ def bootstrap_schema(engine: Engine, *, settings=None, retries: int = 1) -> None
             _ensure_primary_key(conn, table, time_column)
             _ensure_hypertable(conn, table, time_column, chunk_days)
         _ensure_chain_columns(conn)
+        _ensure_index_spot_columns(conn)
         _ensure_compression(conn, CHAIN_TABLE, compress_days)
         _ensure_retention(conn, CHAIN_TABLE, retention_days)
         _ensure_chain_aggregate(conn, bucket_seconds)
@@ -133,6 +134,13 @@ def _ensure_chain_columns(conn: Connection) -> None:
     conn.execute(
         text(f"ALTER TABLE {CHAIN_TABLE} ADD COLUMN IF NOT EXISTS vwap varchar")
     )
+
+
+def _ensure_index_spot_columns(conn: Connection) -> None:
+    """Near-month futures columns added to index_spots after the table already existed. create_all()
+    never alters an existing table, so they are added idempotently here."""
+    conn.execute(text("ALTER TABLE index_spots ADD COLUMN IF NOT EXISTS fut_ltp varchar DEFAULT '0'"))
+    conn.execute(text("ALTER TABLE index_spots ADD COLUMN IF NOT EXISTS fut_updated_at timestamp"))
 
 
 def _install_extension(conn: Connection) -> None:

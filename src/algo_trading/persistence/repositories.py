@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import Engine, delete, text
+from sqlalchemy import Engine, case, delete, func, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlmodel import Session, col, select
 
@@ -622,24 +622,48 @@ class Repository:
     # -- Index spots (latest spot + day-open per underlying, for the rate ticker) ---------
 
     def upsert_index_spots(
-        self, spots: dict[str, Decimal], trading_day: date | None = None
+        self,
+        spots: dict[str, Decimal],
+        trading_day: date | None = None,
+        futures: dict[str, Decimal] | None = None,
     ) -> int:
-        """Publish the current index spot per underlying. ``ltp``/``updated_at`` are replaced each
-        call; ``day_open`` is written only on the first insert of the day (kept on conflict), so it
-        is the day's true first price and survives a process re-exec."""
+        """Publish the current index spot (and, when available, near-month futures LTP) per
+        underlying. ``ltp``/``updated_at`` are replaced each call; ``day_open`` is written only on
+        the first insert of the day (kept on conflict), so it is the day's true first price and
+        survives a process re-exec. ``futures`` is keyed by underlying; an underlying absent from
+        it keeps its stored futures value (never overwritten to zero) — a momentarily missing
+        futures tick must not blank the ticker."""
         if not spots:
             return 0
         day = _today_str(trading_day)
         now = datetime.utcnow()
-        rows = [
-            {"trading_day": day, "underlying": str(u), "day_open": str(ltp),
-             "ltp": str(ltp), "updated_at": now}
-            for u, ltp in spots.items()
-        ]
+        futures = futures or {}
+        rows = []
+        for u, ltp in spots.items():
+            row = {"trading_day": day, "underlying": str(u), "day_open": str(ltp),
+                   "ltp": str(ltp), "updated_at": now,
+                   "fut_ltp": "0", "fut_updated_at": None}
+            fut = futures.get(u)
+            if fut is not None:
+                row["fut_ltp"] = str(fut)
+                row["fut_updated_at"] = now
+            rows.append(row)
         stmt = pg_insert(IndexSpotRow).values(rows)
+        # When this cycle carries no futures reading for a row (excluded.fut_updated_at IS NULL),
+        # keep the stored value instead of overwriting it to zero — a momentarily missing futures
+        # tick must not blank the ticker.
+        excl = stmt.excluded
         stmt = stmt.on_conflict_do_update(
             index_elements=["trading_day", "underlying"],
-            set_={"ltp": stmt.excluded.ltp, "updated_at": stmt.excluded.updated_at},
+            set_={
+                "ltp": excl.ltp,
+                "updated_at": excl.updated_at,
+                "fut_ltp": case(
+                    (excl.fut_updated_at.isnot(None), excl.fut_ltp),
+                    else_=IndexSpotRow.fut_ltp,
+                ),
+                "fut_updated_at": func.coalesce(excl.fut_updated_at, IndexSpotRow.fut_updated_at),
+            },
         )
         with Session(self._engine) as session:
             session.exec(stmt)

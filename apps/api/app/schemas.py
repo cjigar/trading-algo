@@ -22,6 +22,8 @@ class IndexSpotOut(BaseModel):
     change_pct: float  # change / baseline * 100
     age_seconds: float  # how old the reading is
     stale: bool  # older than the live-quote freshness window
+    fut_ltp: float | None = None  # near-month futures LTP; null until the futures feed ticks
+    fut_stale: bool = True  # futures reading older than the freshness window (or never seen)
 
 
 class StateOut(BaseModel):
@@ -143,10 +145,20 @@ def _spot_out(row, max_age_seconds: float, prev_close: Decimal | None = None) ->
     change = ltp - baseline
     pct = (change / baseline * 100) if baseline != 0 else Decimal(0)
     age = max(0.0, (datetime.utcnow() - row.updated_at).total_seconds())
+    # Futures LTP ages on its own timestamp; None/0 or never-updated → treat as absent/stale so the
+    # ticker shows "—" rather than a frozen price.
+    fut_updated_at = getattr(row, "fut_updated_at", None)
+    fut_ltp_raw = _dec(getattr(row, "fut_ltp", 0))
+    if fut_updated_at is None or fut_ltp_raw == 0:
+        fut_ltp, fut_stale = None, True
+    else:
+        fut_age = max(0.0, (datetime.utcnow() - fut_updated_at).total_seconds())
+        fut_ltp, fut_stale = float(fut_ltp_raw), fut_age > max_age_seconds
     return IndexSpotOut(
         underlying=row.underlying, ltp=float(ltp), day_open=float(day_open),
         prev_close=float(baseline), change=float(change), change_pct=float(pct),
         age_seconds=age, stale=age > max_age_seconds,
+        fut_ltp=fut_ltp, fut_stale=fut_stale,
     )
 
 
