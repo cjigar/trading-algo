@@ -76,13 +76,14 @@ because its expiry date crosses `< today` then — no per-underlying special-cas
   `purge_expired_chain_snapshots(today) ->` executes
   `DELETE FROM option_chain_snapshots WHERE expiry IS NOT NULL AND expiry < :today`.
   One statement covers both underlyings; each self-purges after its own expiry.
-- `bootstrap.py`: **disable compression** on the chain table (`_ensure_compression` becomes a
-  no-op and removes any existing policy) — data lives < 1 week, so compress-then-row-delete is
-  wasteful and complicates deletes.
+- **Compression stays ON, unchanged.** This Timescale version (`latest-pg16`) supports `DELETE`
+  on compressed chunks, so the expiry purge works regardless. Disabling compression was only an
+  efficiency nicety and would force a decompress migration on the already-compressed live table,
+  so we keep it as-is. (Decision revised from the original draft after checking the live DB.)
 - Set the time-based retention to a **14-day backstop** (`chain_retention_days` default
   30 → 14) so anything the purge misses (e.g. NULL-expiry legacy rows) still ages out.
-- New setting `chain_retention_mode: "expiry"` (default) vs `"days"` to keep the old
-  time-only behavior available.
+- New setting `chain_retention_mode: "expiry"` (default) vs `"days"` to gate whether the
+  app-level purge runs (`"days"` keeps the old time-only behavior).
 
 ### 5. Purge trigger
 
@@ -122,8 +123,8 @@ is a one-setting change if Kotak's real-world behavior differs.
 - Confirm the `expiry` column is populated for new rows and that
   `purge_expired_chain_snapshots` deletes exactly the expired week per underlying while leaving
   the live week (both indices) intact.
-- Confirm the 14-day backstop retention and disabled compression are reconciled correctly by
-  `bootstrap_schema` on an existing database (idempotent restart is a no-op).
+- Confirm the 14-day backstop retention is reconciled correctly by `bootstrap_schema` on an
+  existing database (idempotent restart is a no-op); compression is left untouched.
 
 ## Out of scope
 
