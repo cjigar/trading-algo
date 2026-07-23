@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import threading
 import time
-from datetime import UTC
+from datetime import UTC, date
 from decimal import Decimal
 from typing import Any
 
@@ -251,6 +251,13 @@ class Orchestrator:
         if self._oi_mode and self._writer is not None:
             return self._writer.flush()
         return 0
+
+    def purge_expired_snapshots(self, today: date | None = None) -> int:
+        """Expiry-aligned retention: delete chain snapshots whose contract expiry has passed.
+        No-op unless chain_retention_mode == 'expiry'. Returns the number of rows deleted."""
+        if getattr(self._settings, "chain_retention_mode", "expiry") != "expiry":
+            return 0
+        return self._repo.purge_expired_chain_snapshots(today)
 
     def write_pnl_snapshot(self) -> int:
         """Publish current P&L and the open positions' prices for the dashboard process.

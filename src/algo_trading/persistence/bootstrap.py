@@ -41,7 +41,7 @@ CHAIN_AGG_VIEW = "chain_oi_1m"
 # Defaults mirroring Settings, for callers that bootstrap without a settings object (tests).
 DEFAULT_CHUNK_INTERVAL_DAYS = 1
 DEFAULT_COMPRESS_AFTER_DAYS = 2
-DEFAULT_RETENTION_DAYS = 30
+DEFAULT_RETENTION_DAYS = 14
 DEFAULT_AGG_BUCKET_SECONDS = 60
 
 

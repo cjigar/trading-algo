@@ -15,7 +15,7 @@ from algo_trading.persistence.testing import SchemaTuning
 
 # Applied before any Settings are constructed: several tests build settings from the environment
 # and re-bootstrap the session database (StateBridge, the API app). Without this they would
-# re-apply the production 30-day retention policy, whose background job then drops the
+# re-apply the production 14-day retention policy, whose background job then drops the
 # historically-dated snapshots the fixtures write.
 os.environ.update(SchemaTuning().as_env())
 

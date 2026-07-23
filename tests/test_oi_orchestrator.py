@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pandas as pd
@@ -139,3 +139,30 @@ def test_oi_snapshots_persisted(scrip, engine):
     orch._writer.flush()  # force flush the batched writer
     state = orch.repo.latest_chain_state()
     assert len(state) == 22  # 11 strikes × CE/PE
+
+
+def test_orchestrator_purges_expired_snapshots(scrip, engine):
+    s = _oi_settings()
+    object.__setattr__(s, "chain_retention_mode", "expiry")
+    repo = Repository(engine)
+    repo.write_chain_snapshots([{"underlying": "NIFTY", "strike": "23000", "option_type": "CE",
+                                 "instrument_token": "EXP", "oi": 1, "ltp": "1", "volume": 1,
+                                 "expiry": date(2025, 1, 21), "timestamp": datetime(2025, 1, 20, 10, 0)}])
+    repo.write_chain_snapshots([{"underlying": "NIFTY", "strike": "23050", "option_type": "CE",
+                                 "instrument_token": "LIVE", "oi": 1, "ltp": "1", "volume": 1,
+                                 "expiry": date(2025, 1, 28), "timestamp": datetime(2025, 1, 20, 10, 0)}])
+    orch = Orchestrator(s, scrip_master=scrip, broker=PaperBroker(), repo=repo)
+    assert orch.purge_expired_snapshots(today=date(2025, 1, 22)) == 1
+    assert {r.instrument_token for r in repo.latest_chain_state()} == {"LIVE"}
+
+
+def test_orchestrator_purge_noop_in_days_mode(scrip, engine):
+    s = _oi_settings()
+    object.__setattr__(s, "chain_retention_mode", "days")
+    repo = Repository(engine)
+    repo.write_chain_snapshots([{"underlying": "NIFTY", "strike": "23000", "option_type": "CE",
+                                 "instrument_token": "EXP", "oi": 1, "ltp": "1", "volume": 1,
+                                 "expiry": date(2025, 1, 21), "timestamp": datetime(2025, 1, 20, 10, 0)}])
+    orch = Orchestrator(s, scrip_master=scrip, broker=PaperBroker(), repo=repo)
+    assert orch.purge_expired_snapshots(today=date(2025, 1, 22)) == 0
+    assert {r.instrument_token for r in repo.latest_chain_state()} == {"EXP"}
