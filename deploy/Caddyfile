@@ -32,7 +32,10 @@
 	}
 
 	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		# NO Strict-Transport-Security here. HSTS is only safe with a real, trusted cert: on the
+		# IP-only self-signed setup (SITE_ADDRESS=:443) a cached HSTS entry makes the cert warning
+		# NON-bypassable — the browser drops the "Proceed" option and the dashboard becomes
+		# unreachable. Re-add HSTS only once SITE_ADDRESS is a DOMAIN with a Let's Encrypt cert.
 		X-Content-Type-Options nosniff
 		X-Frame-Options DENY
 		Referrer-Policy strict-origin-when-cross-origin
