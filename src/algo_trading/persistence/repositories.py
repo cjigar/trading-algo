@@ -305,6 +305,11 @@ class Repository:
                         volume=r.get("volume"),
                         vwap=r.get("vwap"),
                         expiry=r.get("expiry"),
+                        iv=r.get("iv"),
+                        delta=r.get("delta"),
+                        gamma=r.get("gamma"),
+                        theta=r.get("theta"),
+                        vega=r.get("vega"),
                         timestamp=r.get("timestamp") or datetime.utcnow(),
                     )
                 )

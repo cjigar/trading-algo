@@ -140,6 +140,10 @@ def _ensure_chain_columns(conn: Connection) -> None:
     conn.execute(
         text(f"CREATE INDEX IF NOT EXISTS ix_option_chain_snapshots_expiry ON {CHAIN_TABLE} (expiry)")
     )
+    for column in ("iv", "delta", "gamma", "theta", "vega"):
+        conn.execute(
+            text(f"ALTER TABLE {CHAIN_TABLE} ADD COLUMN IF NOT EXISTS {column} varchar")
+        )
 
 
 def _ensure_index_spot_columns(conn: Connection) -> None:

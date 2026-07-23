@@ -57,6 +57,21 @@ def test_write_chain_snapshot_expiry_defaults_none(repo: Repository):
     assert repo.latest_chain_state()[0].expiry is None
 
 
+def test_write_chain_snapshots_persists_greeks(repo):
+    ts = datetime(2025, 1, 15, 10, 0)
+    repo.write_chain_snapshots([{
+        "underlying": "NIFTY", "strike": "23000", "option_type": "CE",
+        "instrument_token": "GK1", "oi": 100, "ltp": "120", "volume": 5, "vwap": "119",
+        "iv": "0.185", "delta": "0.52", "gamma": "0.0031", "theta": "-6.2", "vega": "8.1",
+        "timestamp": ts,
+    }])
+    rows = repo.latest_chain_state()
+    row = next(r for r in rows if r.instrument_token == "GK1")
+    assert row.iv == "0.185"
+    assert row.delta == "0.52"
+    assert row.vega == "8.1"
+
+
 # The broker sends OI in a token's first full packet and NULL in the LTP-only ticks that follow,
 # so "newest row" and "newest OI reading" are different rows for nearly every token.
 

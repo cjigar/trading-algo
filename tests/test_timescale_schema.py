@@ -116,6 +116,22 @@ def test_vwap_column_added_idempotently(fresh_db):
         engine.dispose()
 
 
+def test_greeks_columns_added_idempotently(fresh_db):
+    engine = create_engine_from_url(fresh_db, settings=SchemaTuning())
+    try:
+        with engine.connect() as conn:
+            present = {
+                r[0] for r in conn.execute(text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'option_chain_snapshots'"
+                )).all()
+            }
+        assert {"iv", "delta", "gamma", "theta", "vega"} <= present
+        bootstrap_schema(engine, settings=SchemaTuning())  # second run must be a no-op
+    finally:
+        engine.dispose()
+
+
 # --- conversion of a pre-existing (SQLite-era) table -----------------------------------
 
 
