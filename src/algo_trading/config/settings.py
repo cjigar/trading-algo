@@ -122,11 +122,19 @@ class Settings(BaseSettings):
     market_open: time = time(9, 15)
     market_close: time = time(15, 30)
     squareoff_time: time = time(15, 15)
-    premarket_login_time: time = time(8, 45)
+    # Daily fresh broker login runs here (Mon-Fri, non-holiday), before the 09:15 open, so the
+    # feed is warm and authenticated at the bell. Kotak access tokens are day-scoped, so a
+    # process that logged in yesterday must re-authenticate for today.
+    premarket_login_time: time = time(9, 0)
     stale_feed_seconds: int = 15
     # Minimum gap between stale-feed reconnect attempts, so a quiet market or a broker-side
     # outage can never turn the watchdog into a reconnect loop.
     feed_recover_cooldown_seconds: int = 30
+    # If the feed stays stale this long *during the trading window* despite the watchdog's
+    # resubscribes, the broker session itself is dead (e.g. the day-scoped token expired) and a
+    # resubscribe cannot fix it. The loop then re-execs for a fresh login. Well above
+    # feed_recover_cooldown_seconds so the cheap reconnect always gets several tries first.
+    feed_hard_recover_seconds: int = 120
 
     # --- Dashboard ---
     dashboard_refresh_seconds: int = 30  # auto-refresh interval for the Streamlit dashboard

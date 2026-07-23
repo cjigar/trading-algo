@@ -8,7 +8,11 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from algo_trading.config.settings import get_settings
-from algo_trading.core.scheduler import in_trading_window, is_trading_day
+from algo_trading.core.scheduler import (
+    in_trading_window,
+    is_trading_day,
+    should_hard_recover,
+)
 
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -94,3 +98,23 @@ def test_scheduler_registers_market_open_arm_job(settings):
         assert {"premarket_login", "market_open", "squareoff", "logout"} <= job_ids
     finally:
         sched.shutdown()
+
+
+# --- should_hard_recover (feed-death escalation) --------------------------------------
+
+
+def test_hard_recover_false_when_feed_healthy():
+    # stale_since is None while ticks are flowing -> never escalate.
+    assert should_hard_recover(None, 10_000.0, 120) is False
+
+
+def test_hard_recover_false_before_threshold():
+    assert should_hard_recover(1_000.0, 1_000.0 + 119, 120) is False
+
+
+def test_hard_recover_true_at_threshold():
+    assert should_hard_recover(1_000.0, 1_000.0 + 120, 120) is True
+
+
+def test_hard_recover_true_past_threshold():
+    assert should_hard_recover(1_000.0, 1_000.0 + 300, 120) is True

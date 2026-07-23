@@ -9,19 +9,40 @@ Run: ``python -m algo_trading.entrypoints.run_algo``
 
 from __future__ import annotations
 
+import os
 import signal
+import sys
 import time
 from datetime import UTC, datetime
 
 from algo_trading.config.secrets import load_secrets
 from algo_trading.config.settings import get_settings
 from algo_trading.core.orchestrator import LiveModeNotArmedError, Orchestrator
-from algo_trading.core.scheduler import MarketScheduler, in_trading_window
+from algo_trading.core.scheduler import (
+    IST,
+    MarketScheduler,
+    in_trading_window,
+    is_trading_day,
+    should_hard_recover,
+)
 from algo_trading.domain.enums import TradingMode
 from algo_trading.instruments.loader import load_scrip_master
 from algo_trading.observability.logging import configure_logging, get_logger
 
 log = get_logger("run_algo")
+
+
+def reexec_process(reason: str) -> None:  # pragma: no cover - replaces the process image
+    """Restart this process in place for a clean, fully re-authenticated start.
+
+    A day-scoped broker token cannot be refreshed by resubscribing an existing websocket, and
+    swapping a live SDK client mid-process is the code path that previously leaked sockets and
+    threads. Re-exec instead: ``execv`` replaces the image, so every old socket/thread/FD is
+    discarded and the proven cold-start path (login -> attach feeds -> arm) runs from scratch.
+    Under tini (PID 1) the container stays up; the Python child is simply replaced.
+    """
+    log.warning("reexec", reason=reason)
+    os.execv(sys.executable, [sys.executable, *sys.argv])
 
 
 def build_orchestrator() -> Orchestrator:
@@ -80,9 +101,17 @@ def main() -> None:
         orch.square_off_all("scheduled square-off")
         orch.stop_session()
 
+    def _on_premarket_login() -> None:
+        # Fresh, day-scoped broker login before the 09:15 open. Re-exec so the cold-start path
+        # runs (login -> attach feeds); the 09:15 market_open job then arms. Holidays are skipped.
+        if is_trading_day(datetime.now(UTC).astimezone(IST).date(), settings):
+            reexec_process("daily pre-market re-login")
+        else:
+            log.info("premarket_login_skipped", reason="not a trading day")
+
     scheduler = MarketScheduler(
         settings,
-        on_premarket_login=lambda: log.info("premarket_login_tick"),
+        on_premarket_login=_on_premarket_login,
         on_market_open=_on_market_open,
         on_squareoff=_on_squareoff,
         on_logout=lambda: orch.stop_session(),
@@ -104,6 +133,8 @@ def main() -> None:
     # ours — and the open positions' prices — to the shared database on a timer.
     pnl_every = max(1, settings.pnl_snapshot_seconds)
     since_pnl = 0
+    # Monotonic timestamp the feed first went stale (None while healthy), for hard recovery.
+    stale_since: float | None = None
     log.info("running", strategy=settings.strategy)
     try:
         while not stop["flag"]:  # pragma: no cover - long-running loop
@@ -117,6 +148,18 @@ def main() -> None:
                 # Reconnects a feed that went quiet — including a subscription the SDK dropped
                 # because it was issued before the websocket finished connecting.
                 orch.recover_stale_feed()
+                # Hard recovery: if the feed stays stale through the trading window despite those
+                # resubscribes, the broker session is dead (e.g. token expired) — re-exec for a
+                # fresh login. Gated to the trading window so a quiet pre/post-market never trips
+                # it. Stays reset outside the window and whenever ticks are flowing.
+                if in_trading_window(datetime.now(UTC), settings) and orch.feed_is_stale():
+                    stale_since = stale_since if stale_since is not None else time.monotonic()
+                    if should_hard_recover(
+                        stale_since, time.monotonic(), settings.feed_hard_recover_seconds
+                    ):
+                        reexec_process("feed stale beyond hard-recover threshold; session likely expired")
+                else:
+                    stale_since = None
             except Exception:  # noqa: BLE001
                 log.exception("feed_recovery_failed")
             elapsed += 1

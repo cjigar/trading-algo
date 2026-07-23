@@ -48,6 +48,18 @@ def in_trading_window(now: datetime, settings: Settings) -> bool:
     return settings.market_open <= local.time() < settings.squareoff_time
 
 
+def should_hard_recover(
+    stale_since: float | None, now: float, threshold_seconds: float
+) -> bool:
+    """True once the feed has been continuously stale for ``threshold_seconds``.
+
+    ``stale_since`` is the monotonic timestamp when the feed first went stale (None when it is
+    healthy). Used by the run loop to escalate from cheap resubscribes to a full re-login when the
+    broker session itself has died.
+    """
+    return stale_since is not None and (now - stale_since) >= threshold_seconds
+
+
 class MarketScheduler:
     def __init__(
         self,
