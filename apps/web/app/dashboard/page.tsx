@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { Banner, DataTable, Metric, SpotTicker, Tabs } from "@/components/ui";
+import { AccountSummary, Banner, DataTable, Metric, SpotTicker, Tabs } from "@/components/ui";
 import { api, clearToken, type BrokerPnL, type Chain, type EnginePnL, type OiTrends } from "@/lib/api";
 import { fmtOi } from "@/lib/format";
 import { useStream } from "@/lib/useStream";
@@ -75,7 +75,10 @@ export default function Dashboard() {
 
       {state && <Banner mode={state.mode} liveArmed={state.live_armed} algoState={state.algo_state} strategy={state.strategy} />}
 
-      <SpotTicker spots={state?.spots ?? []} />
+      <div className="sticky top-0 z-10">
+        <SpotTicker spots={state?.spots ?? []} />
+        <AccountSummary brokerPnl={brokerPnl} algoState={state?.algo_state} />
+      </div>
 
       <div className="flex items-center gap-2">
         <span className="mr-1 text-xs text-neutral-500">Auto 9:15–15:30 IST</span>
@@ -91,12 +94,6 @@ export default function Dashboard() {
           {brokerPnl && (
             <div className="space-y-2">
               <h2 className="text-sm font-medium text-neutral-300">Broker account P&amp;L (live M2M)</h2>
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                <Metric label="Live M2M (P&L)" value={<Signed value={brokerPnl.total_pnl} />} />
-                <Metric label="Realized (booked)" value={<Signed value={brokerPnl.total_realized} />} />
-                <Metric label="Open positions" value={brokerPnl.open_count} />
-                <Metric label="Positions (total)" value={brokerPnl.per_position.length} />
-              </div>
               <p className="text-xs text-neutral-500">
                 Live account M2M: open positions marked at the broker&apos;s live LTP (realized + unrealized).
                 {brokerPnl.mtm_pending_count > 0 && ` ${brokerPnl.mtm_pending_count} position(s) awaiting a live quote (shown at realized only).`}
@@ -113,7 +110,6 @@ export default function Dashboard() {
               <Metric label="Day P&L" value={<Signed value={pnl.day_pnl} />} />
               <Metric label="Realized" value={<Signed value={pnl.total_realized} />} />
               <Metric label="Unrealized (open)" value={<Signed value={pnl.total_unrealized} />} />
-              <Metric label="Algo state" value={state?.algo_state ?? "—"} />
             </div>
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
               <Metric label="Fills" value={pnl.trade_count} />

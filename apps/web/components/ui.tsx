@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 
-import type { IndexSpot } from "@/lib/api";
+import type { BrokerPnL, IndexSpot } from "@/lib/api";
 
 // Sticky bar of live index rates (NIFTY / BANKNIFTY / SENSEX), shown across every tab. Each chip
 // carries the spot LTP and the day's change (points + %), green up / red down, with the near-month
@@ -13,7 +13,7 @@ export function SpotTicker({ spots }: { spots: IndexSpot[] }) {
   if (!spots || spots.length === 0) return null;
   const fmt = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return (
-    <div className="sticky top-0 z-10 flex flex-wrap items-start gap-6 border-b border-neutral-800 bg-neutral-950/95 px-4 py-2 backdrop-blur">
+    <div className="flex flex-wrap items-start gap-6 border-b border-neutral-800 bg-neutral-950/95 px-4 py-2 backdrop-blur">
       {spots.map((s) => {
         const up = s.change >= 0;
         const tone = s.stale ? "text-neutral-500" : up ? "text-emerald-400" : "text-red-400";
@@ -35,6 +35,34 @@ export function SpotTicker({ spots }: { spots: IndexSpot[] }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// Compact account-summary strip: live M2M / realized / unrealized (M2M - realized) / algo state /
+// open / total positions. Fed by the SSE stream, pinned so it shows on every tab. Renders nothing
+// until broker P&L arrives.
+export function AccountSummary({ brokerPnl, algoState }: { brokerPnl: BrokerPnL | null; algoState?: string }) {
+  if (!brokerPnl) return null;
+  const unreal = brokerPnl.total_pnl - brokerPnl.total_realized;
+  const money = (n: number) => `₹${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  const signed = (n: number) => (
+    <span className={n >= 0 ? "text-emerald-400" : "text-red-400"}>{money(n)}</span>
+  );
+  const Item = ({ label, children }: { label: string; children: ReactNode }) => (
+    <div className="flex items-baseline gap-1.5">
+      <span className="text-[10px] uppercase tracking-wide text-neutral-500">{label}</span>
+      <span className="text-sm font-semibold tabular-nums">{children}</span>
+    </div>
+  );
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-neutral-800 bg-neutral-950/95 px-4 py-2 backdrop-blur">
+      <Item label="Live M2M">{signed(brokerPnl.total_pnl)}</Item>
+      <Item label="Realized">{signed(brokerPnl.total_realized)}</Item>
+      <Item label="Unrealized">{signed(unreal)}</Item>
+      <Item label="Algo">{algoState ?? "—"}</Item>
+      <Item label="Open">{brokerPnl.open_count}</Item>
+      <Item label="Positions">{brokerPnl.per_position.length}</Item>
     </div>
   );
 }
