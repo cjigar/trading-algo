@@ -134,6 +134,9 @@ def _ensure_chain_columns(conn: Connection) -> None:
     conn.execute(
         text(f"ALTER TABLE {CHAIN_TABLE} ADD COLUMN IF NOT EXISTS vwap varchar")
     )
+    conn.execute(
+        text(f"ALTER TABLE {CHAIN_TABLE} ADD COLUMN IF NOT EXISTS expiry date")
+    )
 
 
 def _ensure_index_spot_columns(conn: Connection) -> None:

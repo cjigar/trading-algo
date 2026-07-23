@@ -5,7 +5,7 @@ Retention is a TimescaleDB policy now (see tests/test_timescale_schema.py), not 
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from algo_trading.persistence.repositories import Repository
 from algo_trading.persistence.snapshot_writer import SnapshotWriter
@@ -43,6 +43,18 @@ def test_write_chain_snapshot_vwap_defaults_none(repo: Repository):
     # A snapshot dict without a vwap key stores NULL, not a crash.
     repo.write_chain_snapshots([_snap("T1", "23000", oi=1000, ts=datetime(2025, 1, 15, 10, 0))])
     assert repo.latest_chain_state()[0].vwap is None
+
+
+def test_write_chain_snapshot_persists_expiry(repo: Repository):
+    repo.write_chain_snapshots([
+        _snap("T1", "23000", ts=datetime(2025, 1, 15, 10, 0)) | {"expiry": date(2025, 1, 21)},
+    ])
+    assert repo.latest_chain_state()[0].expiry == date(2025, 1, 21)
+
+
+def test_write_chain_snapshot_expiry_defaults_none(repo: Repository):
+    repo.write_chain_snapshots([_snap("T1", "23000", ts=datetime(2025, 1, 15, 10, 0))])
+    assert repo.latest_chain_state()[0].expiry is None
 
 
 # The broker sends OI in a token's first full packet and NULL in the LTP-only ticks that follow,

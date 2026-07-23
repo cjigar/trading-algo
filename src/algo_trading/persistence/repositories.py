@@ -287,7 +287,7 @@ class Repository:
 
     def write_chain_snapshots(self, rows: list[dict], trading_day: date | None = None) -> int:
         """Bulk-insert option-chain snapshot rows. Each dict: underlying, strike, option_type,
-        instrument_token, oi, ltp, volume, timestamp."""
+        instrument_token, oi, ltp, volume, expiry, timestamp."""
         if not rows:
             return 0
         day = _today_str(trading_day)
@@ -304,6 +304,7 @@ class Repository:
                         ltp=str(r.get("ltp", "0")),
                         volume=r.get("volume"),
                         vwap=r.get("vwap"),
+                        expiry=r.get("expiry"),
                         timestamp=r.get("timestamp") or datetime.utcnow(),
                     )
                 )

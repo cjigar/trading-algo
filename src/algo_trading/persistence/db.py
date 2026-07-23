@@ -12,7 +12,7 @@ extension, hypertable, policy, and continuous-aggregate setup applied at startup
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import BigInteger, Column, Engine, Identity, Index
 from sqlmodel import Field, SQLModel, create_engine
@@ -223,6 +223,7 @@ class OptionChainSnapshotRow(SQLModel, table=True):
     ltp: str = "0"
     volume: int | None = None
     vwap: str | None = None  # session VWAP for this option (serialized Decimal); None until first tick
+    expiry: date | None = Field(default=None, index=True)  # contract weekly expiry; drives expiry-aligned purge
 
 
 class BrokerOrderRow(SQLModel, table=True):
