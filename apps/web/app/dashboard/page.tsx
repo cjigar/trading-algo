@@ -106,7 +106,7 @@ export default function Dashboard() {
               <h2 className="text-sm font-medium text-neutral-300">Algo session P&amp;L (this session&apos;s fills)</h2>
               <EngineFreshness engine={pnl.engine} />
             </div>
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
               <Metric label="Day P&L" value={<Signed value={pnl.day_pnl} />} />
               <Metric label="Realized" value={<Signed value={pnl.total_realized} />} />
               <Metric label="Unrealized (open)" value={<Signed value={pnl.total_unrealized} />} />
