@@ -150,3 +150,18 @@ def test_orchestrator_captures_both_chains(combined_scrip, engine):
     state = orch.repo.latest_chain_state()
     unders = {r.underlying for r in state}
     assert unders == {"NIFTY", "SENSEX"}  # both chains persisted
+
+
+def test_captures_both_but_trades_only_nifty(combined_scrip, engine):
+    s = _settings()
+    object.__setattr__(s, "oi_underlyings", [Underlying.NIFTY])                                # trade NIFTY only
+    object.__setattr__(s, "chain_capture_underlyings", [Underlying.NIFTY, Underlying.SENSEX])  # capture both
+    orch = Orchestrator(s, scrip_master=combined_scrip, broker=PaperBroker(), repo=Repository(engine))
+    orch.register_index_token(NIFTY_IDX, Underlying.NIFTY)
+    orch.register_index_token(SENSEX_IDX, Underlying.SENSEX)
+    orch.start_session()
+    _feed_both(orch, nifty_ce_oi=5000, sensex_ce_oi=5000)
+    orch.flush_snapshots()
+    assert {r.underlying for r in orch.repo.latest_chain_state()} == {"NIFTY", "SENSEX"}  # both captured
+    orch.evaluate_oi(now=WED)  # Wednesday is a SENSEX trading day — but SENSEX isn't armed
+    assert orch.positions.open_position_count() == 0  # SENSEX not in oi_underlyings -> no trade

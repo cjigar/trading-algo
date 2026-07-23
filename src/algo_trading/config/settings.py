@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     # --- OI selling strategy (PLACEHOLDERS — confirm before live) ---
     # Underlyings the OI strategy trades (each gated to its own weekdays below).
     oi_underlyings: Annotated[list[Underlying], NoDecode] = Field(default_factory=lambda: [Underlying.NIFTY])
+    # Underlyings whose option chain is CAPTURED into the snapshot store (data-only). A superset
+    # of oi_underlyings: capturing an underlying does NOT arm trading it. Default: both indices.
+    chain_capture_underlyings: Annotated[list[Underlying], NoDecode] = Field(
+        default_factory=lambda: [Underlying.NIFTY, Underlying.SENSEX]
+    )
     strike_window: int = 5  # strikes each side of ATM the strategy AGGREGATES OI over
     # strikes each side of ATM to subscribe/capture for the chain VIEW (0 = same as strike_window)
     chain_feed_window: int = 0
@@ -176,7 +181,7 @@ class Settings(BaseSettings):
             )
         return v
 
-    @field_validator("underlyings", "oi_underlyings", mode="before")
+    @field_validator("underlyings", "oi_underlyings", "chain_capture_underlyings", mode="before")
     @classmethod
     def _split_underlyings(cls, v: object) -> object:
         if isinstance(v, str):

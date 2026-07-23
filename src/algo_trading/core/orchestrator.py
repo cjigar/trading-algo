@@ -94,14 +94,22 @@ class Orchestrator:
                 flush_seconds=float(self._settings.snapshot_min_interval_seconds) or 2.0,
                 min_interval_seconds=float(self._settings.snapshot_min_interval_seconds),
             )
-            # One chain manager + strategy per configured underlying (each gated to its own days).
-            for u in self._settings.oi_underlyings:
-                chain = OptionChainManager(
+            # Chains are captured for the capture set (data-only); strategies (and thus orders) are
+            # built ONLY for oi_underlyings. The capture set always includes every traded underlying
+            # so each strategy has a chain, but capturing SENSEX never arms trading it.
+            capture_underlyings = getattr(
+                self._settings, "chain_capture_underlyings", self._settings.oi_underlyings
+            )
+            capture_set = list(dict.fromkeys([*capture_underlyings, *self._settings.oi_underlyings]))
+            for u in capture_set:
+                self._oi_chains[u] = OptionChainManager(
                     self._settings, self._resolver, subscribe=self._subscribe_option,
                     snapshot_writer=self._writer, underlying=u,
                 )
-                self._oi_chains[u] = chain
-                self._oi_strategies[u] = OiSellingStrategy(self._settings, chain, underlying=u)
+            for u in self._settings.oi_underlyings:
+                self._oi_strategies[u] = OiSellingStrategy(
+                    self._settings, self._oi_chains[u], underlying=u
+                )
             self._strategy: Any = None  # not used in OI mode
         else:
             self._strategy = strategy or VwapBreakoutStrategy(self._settings)
