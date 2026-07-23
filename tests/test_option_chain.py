@@ -99,3 +99,20 @@ def test_per_option_vwap(resolver):
     m.on_option_tick(_opt(tok, "120", vol=200))   # delta vol = 100 -> weighted
     v = m.vwap_for(tok)
     assert v is not None and Decimal("100") <= v <= Decimal("120")
+
+
+def test_option_tick_snapshot_includes_vwap(resolver):
+    captured = []
+
+    class _Writer:
+        def add(self, row):
+            captured.append(row)
+
+    m = OptionChainManager(_settings(), resolver, subscribe=lambda t, s: None, snapshot_writer=_Writer())
+    m.on_index_tick(_idx("23062"))          # ATM -> 23050, subscribes the ±5 window
+    m.on_option_tick(_opt("23050CE", "100", vol=500))  # a tracked ATM contract
+    assert captured, "expected a snapshot to be written"
+    assert captured[-1]["instrument_token"] == "23050CE"
+    assert "vwap" in captured[-1]
+    assert captured[-1]["vwap"] is not None   # a tick arrived, so VWAP is set
+    assert Decimal(captured[-1]["vwap"]) == Decimal("100")  # single tick -> VWAP == LTP
