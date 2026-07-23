@@ -223,7 +223,7 @@ class OptionChainSnapshotRow(SQLModel, table=True):
     ltp: str = "0"
     volume: int | None = None
     vwap: str | None = None  # session VWAP for this option (serialized Decimal); None until first tick
-    expiry: date | None = Field(default=None, index=True)  # contract weekly expiry; drives expiry-aligned purge
+    expiry: date | None = Field(default=None)  # contract weekly expiry; drives expiry-aligned purge
 
 
 class BrokerOrderRow(SQLModel, table=True):
