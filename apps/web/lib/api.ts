@@ -77,7 +77,7 @@ export const api = {
 // Minimal hand-written types mirroring the API response models. `pnpm gen:types` can regenerate
 // a full set from the OpenAPI schema into lib/api-types.ts.
 export type IndexSpot = {
-  underlying: string; ltp: number; day_open: number;
+  underlying: string; ltp: number; day_open: number; prev_close: number;
   change: number; change_pct: number; age_seconds: number; stale: boolean;
 };
 export type AlgoState = {

@@ -17,8 +17,9 @@ class IndexSpotOut(BaseModel):
     underlying: str
     ltp: float
     day_open: float
-    change: float  # ltp - day_open (points)
-    change_pct: float  # change / day_open * 100
+    prev_close: float  # previous trading day's close — the baseline for the day change
+    change: float  # ltp - prev_close (points); falls back to ltp - day_open on day one
+    change_pct: float  # change / baseline * 100
     age_seconds: float  # how old the reading is
     stale: bool  # older than the live-quote freshness window
 
@@ -128,7 +129,7 @@ class ChainOut(BaseModel):
     per_strike: list[ChainStrikeOut]
 
 
-def _spot_out(row, max_age_seconds: float) -> IndexSpotOut:
+def _spot_out(row, max_age_seconds: float, prev_close: Decimal | None = None) -> IndexSpotOut:
     def _dec(v) -> Decimal:
         try:
             return Decimal(str(v))
@@ -136,12 +137,15 @@ def _spot_out(row, max_age_seconds: float) -> IndexSpotOut:
             return Decimal(0)
 
     ltp, day_open = _dec(row.ltp), _dec(row.day_open)
-    change = ltp - day_open
-    pct = (change / day_open * 100) if day_open != 0 else Decimal(0)
+    # Day change is measured against the previous trading day's close (what every ticker shows).
+    # Fall back to the day's first spot only when there is no prior-day close yet (day one).
+    baseline = prev_close if (prev_close is not None and prev_close != 0) else day_open
+    change = ltp - baseline
+    pct = (change / baseline * 100) if baseline != 0 else Decimal(0)
     age = max(0.0, (datetime.utcnow() - row.updated_at).total_seconds())
     return IndexSpotOut(
         underlying=row.underlying, ltp=float(ltp), day_open=float(day_open),
-        change=float(change), change_pct=float(pct),
+        prev_close=float(baseline), change=float(change), change_pct=float(pct),
         age_seconds=age, stale=age > max_age_seconds,
     )
 
@@ -154,7 +158,7 @@ def state_out(settings: Settings, s: DashboardState) -> StateOut:
         strategy=settings.strategy,
         active_underlying=active.value if active else None,
         oi_underlyings=[u.value for u in settings.oi_underlyings],
-        spots=[_spot_out(row, max_age) for row in s.spots],
+        spots=[_spot_out(row, max_age, s.prev_index_closes.get(row.underlying)) for row in s.spots],
     )
 
 

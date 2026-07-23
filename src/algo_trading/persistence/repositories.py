@@ -623,6 +623,24 @@ class Repository:
                 session.exec(select(IndexSpotRow).where(IndexSpotRow.trading_day == day))
             )
 
+    def prev_index_closes(self, trading_day: date | None = None) -> dict[str, Decimal]:
+        """Per underlying, the close from the most recent *earlier* trading day (its last stored
+        spot). This is the baseline for the ticker's day change — a standard 'change today' is
+        measured against the previous close, not today's open. Empty on the first day (no prior
+        row), where the read layer falls back to day_open."""
+        day = _today_str(trading_day)
+        out: dict[str, Decimal] = {}
+        with Session(self._engine) as session:
+            rows = session.exec(
+                select(IndexSpotRow)
+                .where(IndexSpotRow.trading_day < day)
+                .order_by(col(IndexSpotRow.underlying), col(IndexSpotRow.trading_day).desc())
+            )
+            for r in rows:
+                if r.underlying not in out:  # desc order -> first seen per underlying is most recent
+                    out[r.underlying] = _safe_decimal(r.ltp)
+        return out
+
     # -- Audit (append-only) -----------------------------------------------------------
 
     def record_audit(

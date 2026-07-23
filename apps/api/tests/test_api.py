@@ -44,15 +44,28 @@ def test_state(client, auth, repo):
 
 
 def test_state_spots_carry_day_change(client, auth, repo):
-    repo.upsert_index_spots({"NIFTY": Decimal("23800")})
-    repo.upsert_index_spots({"NIFTY": Decimal("23912")})  # +112 on the day
+    # Day change is measured against the PREVIOUS trading day's close (seeded here), not day_open.
+    repo.upsert_index_spots({"NIFTY": Decimal("23800")}, trading_day=date(2026, 7, 22))  # prev close
+    repo.upsert_index_spots({"NIFTY": Decimal("23912")})  # today's live spot
     body = client.get("/api/state", headers=auth).json()
     spots = {s["underlying"]: s for s in body["spots"]}
     assert spots["NIFTY"]["ltp"] == 23912.0
-    assert spots["NIFTY"]["day_open"] == 23800.0
-    assert spots["NIFTY"]["change"] == 112.0
+    assert spots["NIFTY"]["prev_close"] == 23800.0
+    assert spots["NIFTY"]["change"] == 112.0  # 23912 - 23800 (prev close)
     assert round(spots["NIFTY"]["change_pct"], 4) == round(112 / 23800 * 100, 4)
     assert spots["NIFTY"]["stale"] is False
+
+
+def test_spot_out_falls_back_to_day_open_without_prev_close():
+    # Day one (no prior-day close) -> baseline is the day's first spot, not a crash.
+    from datetime import datetime as _dt
+    from types import SimpleNamespace
+
+    from app.schemas import _spot_out
+
+    row = SimpleNamespace(underlying="NIFTY", ltp="23912", day_open="23800", updated_at=_dt.utcnow())
+    out = _spot_out(row, 60, prev_close=None)
+    assert out.prev_close == 23800.0 and out.change == 112.0  # falls back to day_open
 
 
 def test_pnl_and_trades(client, auth, repo):
@@ -233,3 +246,15 @@ def test_broker_pnl_live_m2m(client, auth, repo):
     assert body["mtm_pending_count"] == 0
     pos = next(p for p in body["per_position"] if p["symbol"] == "SENSEX77500PE")
     assert pos["total_pnl"] == 1324.0 and pos["ltp"] == 150.0 and pos["mtm_pending"] is False
+
+
+def test_state_spots_change_vs_previous_close(client, auth, repo):
+    # Reproduces the ticker bug: day change must be vs the PREVIOUS trading day's close,
+    # not the day's first-observed spot. Numbers from the real 2026-07-23 NIFTY screenshot.
+    repo.upsert_index_spots({"NIFTY": Decimal("23996.25")}, trading_day=date(2026, 7, 22))  # prev close
+    repo.upsert_index_spots({"NIFTY": Decimal("23869.60")}, trading_day=date(2026, 7, 23))  # today
+    body = client.get("/api/state", headers=auth).json()
+    spot = {s["underlying"]: s for s in body["spots"]}["NIFTY"]
+    assert spot["ltp"] == 23869.60
+    assert round(spot["change"], 2) == -126.65        # −126.65 today, matches the real ticker
+    assert round(spot["change_pct"], 2) == -0.53
