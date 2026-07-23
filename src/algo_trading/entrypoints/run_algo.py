@@ -13,7 +13,7 @@ import os
 import signal
 import sys
 import time
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from algo_trading.config.secrets import load_secrets
 from algo_trading.config.settings import get_settings
@@ -43,6 +43,12 @@ def reexec_process(reason: str) -> None:  # pragma: no cover - replaces the proc
     """
     log.warning("reexec", reason=reason)
     os.execv(sys.executable, [sys.executable, *sys.argv])
+
+
+def compute_purge_date(now_utc: datetime) -> date:
+    """The current IST calendar date — the boundary the expiry purge keys off (NIFTY rolls
+    Wednesday, SENSEX Friday, both in IST)."""
+    return now_utc.astimezone(IST).date()
 
 
 def build_orchestrator() -> Orchestrator:
@@ -151,6 +157,9 @@ def main() -> None:
     since_broker = 0
     # Monotonic timestamp the feed first went stale (None while healthy), for hard recovery.
     stale_since: float | None = None
+    # Expiry-aligned retention: purge each week's snapshots once its expiry passes. Runs once at
+    # startup and then once per IST day (a cheap idempotent DELETE). No-op in "days" retention mode.
+    last_purge: date | None = None
     log.info("running", strategy=settings.strategy)
     try:
         while not stop["flag"]:  # pragma: no cover - long-running loop
@@ -160,6 +169,14 @@ def main() -> None:
                 orch.process_control_commands()
             except Exception:  # noqa: BLE001
                 log.exception("control_command_processing_failed")
+            try:
+                today_ist = compute_purge_date(datetime.now(UTC))
+                if today_ist != last_purge:
+                    deleted = orch.purge_expired_snapshots(today_ist)
+                    log.info("chain_purge", deleted=deleted, as_of=str(today_ist))
+                    last_purge = today_ist
+            except Exception:  # noqa: BLE001
+                log.exception("chain_purge_failed")
             try:
                 # Reconnects a feed that went quiet — including a subscription the SDK dropped
                 # because it was issued before the websocket finished connecting.

@@ -87,8 +87,9 @@ class Settings(BaseSettings):
         default_factory=lambda: [Underlying.NIFTY, Underlying.SENSEX]
     )
     strike_window: int = 5  # strikes each side of ATM the strategy AGGREGATES OI over
-    # strikes each side of ATM to subscribe/capture for the chain VIEW (0 = same as strike_window)
-    chain_feed_window: int = 0
+    # strikes each side of ATM to subscribe/capture for the chain VIEW (±20 both indices = 166
+    # scrips, within Kotak's 200/subscribe cap; strategy still aggregates OI over strike_window)
+    chain_feed_window: int = 20
     otm_strikes: int = 3  # strikes OTM to sell (CE=ATM+3, PE=ATM-3)
     strike_step: Decimal = Decimal("50")  # NIFTY strike interval
     sensex_strike_step: Decimal = Decimal("100")  # SENSEX strike interval
