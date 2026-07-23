@@ -115,6 +115,23 @@ def test_index_spots_empty_is_noop(repo: Repository):
     assert repo.index_spots() == []
 
 
+def test_prev_index_closes_picks_most_recent_prior_day(repo: Repository):
+    from datetime import date
+
+    repo.upsert_index_spots({"NIFTY": Decimal("100")}, trading_day=date(2026, 7, 20))
+    repo.upsert_index_spots({"NIFTY": Decimal("110")}, trading_day=date(2026, 7, 22))  # more recent
+    repo.upsert_index_spots({"NIFTY": Decimal("999")}, trading_day=date(2026, 7, 23))  # today, excluded
+    got = repo.prev_index_closes(trading_day=date(2026, 7, 23))
+    assert got == {"NIFTY": Decimal("110")}  # most recent day strictly before today (handles gaps)
+
+
+def test_prev_index_closes_empty_when_no_prior_day(repo: Repository):
+    from datetime import date
+
+    repo.upsert_index_spots({"NIFTY": Decimal("100")}, trading_day=date(2026, 7, 23))
+    assert repo.prev_index_closes(trading_day=date(2026, 7, 23)) == {}
+
+
 def test_live_quotes_filters_to_requested_tokens(repo: Repository):
     repo.upsert_live_quotes({"11536": Decimal("100"), "11537": Decimal("80")})
     assert repo.live_quotes(["11537"]) == {"11537": Decimal("80")}

@@ -47,6 +47,7 @@ class DashboardState:
     audit: list = field(default_factory=list)
     chain: list = field(default_factory=list)
     spots: list = field(default_factory=list)  # IndexSpotRow per underlying (rate ticker)
+    prev_index_closes: dict = field(default_factory=dict)  # underlying -> prev trading day's close
     latest_pnl_snapshot: Decimal | None = None
     engine_pnl: EnginePnL | None = None
 
@@ -75,6 +76,7 @@ class StateBridge:
             audit=self._repo.audit_events(),
             chain=self._repo.latest_chain_state(),
             spots=self._repo.index_spots(),
+            prev_index_closes=self._repo.prev_index_closes(),
             latest_pnl_snapshot=snapshot.total if snapshot else None,
             engine_pnl=_engine_pnl(snapshot),
         )
