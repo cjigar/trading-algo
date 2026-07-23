@@ -104,6 +104,8 @@ class ChainStrike:
     # anchors were supplied (callers that don't compute trends keep the prior behavior).
     ce_oi_trends: dict[int, OiTrend] = field(default_factory=dict)
     pe_oi_trends: dict[int, OiTrend] = field(default_factory=dict)
+    ce_vwap: Decimal | None = None
+    pe_vwap: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -144,8 +146,8 @@ def summarize_chain(
     baseline = oi_baseline or {}
     anchors = oi_anchors or {}
     windows = trend_windows or []
-    # value tuple: (oi, ltp, chg_oi, token)
-    by_strike: dict[Decimal, dict[str, tuple[int, Decimal, int, str]]] = {}
+    # value tuple: (oi, ltp, chg_oi, token, vwap)
+    by_strike: dict[Decimal, dict[str, tuple[int, Decimal, int, str, Decimal | None]]] = {}
     for r in rows:
         try:
             strike = Decimal(str(r.strike))
@@ -155,13 +157,15 @@ def summarize_chain(
         ltp = _to_decimal(r.ltp)
         token = str(getattr(r, "instrument_token", ""))
         chg = oi - baseline.get(token, oi)  # 0 when this token has no day-open baseline
-        by_strike.setdefault(strike, {})[str(r.option_type).upper()] = (oi, ltp, chg, token)
+        raw_vwap = getattr(r, "vwap", None)
+        vwap = _to_decimal(raw_vwap) if raw_vwap is not None else None
+        by_strike.setdefault(strike, {})[str(r.option_type).upper()] = (oi, ltp, chg, token, vwap)
 
     per_strike: list[ChainStrike] = []
     ce_total = pe_total = 0
     for strike in sorted(by_strike):
-        ce = by_strike[strike].get("CE", (0, Decimal(0), 0, ""))
-        pe = by_strike[strike].get("PE", (0, Decimal(0), 0, ""))
+        ce = by_strike[strike].get("CE", (0, Decimal(0), 0, "", None))
+        pe = by_strike[strike].get("PE", (0, Decimal(0), 0, "", None))
         ce_total += ce[0]
         pe_total += pe[0]
         per_strike.append(ChainStrike(
@@ -169,6 +173,7 @@ def summarize_chain(
             pe_oi=pe[0], pe_ltp=pe[1], pe_chg_oi=pe[2],
             ce_oi_trends=_trends_for_token(ce[0], ce[3], anchors, windows, flat_threshold),
             pe_oi_trends=_trends_for_token(pe[0], pe[3], anchors, windows, flat_threshold),
+            ce_vwap=ce[4], pe_vwap=pe[4],
         ))
 
     atm = _resolve_atm(per_strike)

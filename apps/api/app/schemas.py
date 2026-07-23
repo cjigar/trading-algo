@@ -115,6 +115,8 @@ class ChainStrikeOut(BaseModel):
     # Per-window OI trends keyed by window label (e.g. "1m", "3m"). Empty when trends not computed.
     ce_oi_trends: dict[str, OiTrendOut] = {}
     pe_oi_trends: dict[str, OiTrendOut] = {}
+    ce_vwap: float | None = None
+    pe_vwap: float | None = None
 
 
 class ChainOut(BaseModel):
@@ -263,4 +265,6 @@ def chain_out(rows: list, underlying: str | None = None,
             strike=float(x.strike), ce_oi=x.ce_oi, ce_ltp=float(x.ce_ltp), ce_chg_oi=x.ce_chg_oi,
             pe_oi=x.pe_oi, pe_ltp=float(x.pe_ltp), pe_chg_oi=x.pe_chg_oi, is_atm=x.is_atm,
             ce_oi_trends=_trends_out(x.ce_oi_trends), pe_oi_trends=_trends_out(x.pe_oi_trends),
+            ce_vwap=float(x.ce_vwap) if x.ce_vwap is not None else None,
+            pe_vwap=float(x.pe_vwap) if x.pe_vwap is not None else None,
         ) for x in cs.per_strike])
