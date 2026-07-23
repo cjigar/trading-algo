@@ -82,7 +82,9 @@ class Settings(BaseSettings):
     # Underlyings the OI strategy trades (each gated to its own weekdays below).
     oi_underlyings: Annotated[list[Underlying], NoDecode] = Field(default_factory=lambda: [Underlying.NIFTY])
     # Underlyings whose option chain is CAPTURED into the snapshot store (data-only). A superset
-    # of oi_underlyings: capturing an underlying does NOT arm trading it. Default: both indices.
+    # of oi_underlyings: capturing an underlying does NOT arm trading it. Each captured underlying
+    # must ALSO be in `underlyings` (that is the set whose index feed is subscribed) or its chain
+    # captures nothing. Default: both indices.
     chain_capture_underlyings: Annotated[list[Underlying], NoDecode] = Field(
         default_factory=lambda: [Underlying.NIFTY, Underlying.SENSEX]
     )

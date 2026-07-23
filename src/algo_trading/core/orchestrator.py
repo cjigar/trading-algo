@@ -217,6 +217,19 @@ class Orchestrator:
             if token:
                 self.register_index_token(token, u)
                 subscribed.append(u.value)
+        # Capturing an underlying's chain needs its index feed (index tick -> ATM -> window),
+        # and index feeds follow `underlyings`. A captured underlying missing from `underlyings`
+        # (or lacking an index token) would silently capture nothing — warn loudly instead.
+        capture = getattr(
+            self._settings, "chain_capture_underlyings", self._settings.oi_underlyings
+        )
+        uncaptured = [u.value for u in capture if u.value not in subscribed]
+        if uncaptured:
+            log.warning(
+                "capture_underlying_without_index_feed",
+                underlyings=uncaptured,
+                hint="add them to ALGO_UNDERLYINGS and set their index token, else chain capture is silent",
+            )
         coordinator.start()
         self._coordinator = coordinator
         # Subscribe each underlying's near-month future so its live LTP feeds the rate ticker.

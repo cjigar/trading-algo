@@ -94,9 +94,12 @@ because its expiry date crosses `< today` then — no per-underlying special-cas
 
 ### 6. Continuous aggregate
 
-- `chain_oi_1m` sits on top of the hypertable; DELETEs invalidate its old buckets. Its own
-  retention trims old buckets, so purged data's aggregate buckets age out naturally. Left as-is;
-  noted as a low-risk follow-up if stale buckets ever surface.
+- `chain_oi_1m` sits on top of the hypertable; row-level DELETEs on the raw table leave the
+  aggregate's already-materialized buckets in place (it has no retention policy of its own, and
+  the refresh policy's 1-day window never revisits week-old buckets). This is harmless in
+  practice: the OI-anchor read path looks back at most `max(oi_trend_windows)` (15 min) — far
+  inside the aggregate's real-time window — so purged week-old data is never read. Left as-is;
+  adding a retention policy on the aggregate is a low-risk follow-up if stale buckets ever matter.
 
 ## Feed capacity — confirmed within limit
 
@@ -105,6 +108,9 @@ Kotak Neo websocket cap: **max 200 scrips per subscribe request** (official doc)
 - ±20 × (CE + PE) = **82 contracts per index**
 - × 2 indices = **164 option scrips** + 2 index spot feeds = **166 scrips concurrent**
 - **166 ≤ 200** — ~34 scrips (17%) headroom.
+- The live process also subscribes a near-month future per `underlyings` entry and a BANKNIFTY
+  index spot (display-only, not part of chain capture), bringing the real concurrent total to
+  **~170 scrips** — still under 200, ~30 (15%) headroom.
 
 Two supporting facts:
 
