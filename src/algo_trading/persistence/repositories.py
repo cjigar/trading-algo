@@ -36,6 +36,24 @@ from algo_trading.persistence.db import (
     TradeRow,
 )
 
+
+def _json_safe(obj: object) -> str:
+    """``json.dumps`` default that never raises on hostile external data.
+
+    Broker position/trade reports are raw SDK dicts we do not control; a value can be a non-JSON
+    type whose ``str()`` itself raises (e.g. an object whose ``__str__`` returns ``None`` ->
+    ``TypeError: __str__ returned non-string``). ``default=str`` propagates that and kills the
+    refresh every cycle, freezing the dashboard's broker panels. Fall back to ``repr`` (which does
+    not go through ``__str__``), and to a typed placeholder if even that fails, so persisting an
+    external report can never crash the poller."""
+    try:
+        return str(obj)
+    except Exception:  # noqa: BLE001 - external data; must never raise out of a persist
+        try:
+            return repr(obj)
+        except Exception:  # noqa: BLE001
+            return f"<unserializable {type(obj).__name__}>"
+
 # Point-in-time OI anchor per instrument token: the continuous aggregate answers everything up to
 # the last bucket that closed at or before :target, the raw hypertable covers the remaining tail,
 # and the outer DISTINCT ON picks whichever is newer per token. A token with no snapshot before
@@ -245,7 +263,7 @@ class Repository:
         with Session(self._engine) as session:
             session.exec(delete(BrokerPositionRow))
             for p in positions:
-                session.add(BrokerPositionRow(trading_day=day, raw=json.dumps(p, default=str)))
+                session.add(BrokerPositionRow(trading_day=day, raw=json.dumps(p, default=_json_safe)))
             session.commit()
         return len(positions)
 
@@ -269,7 +287,7 @@ class Repository:
         with Session(self._engine) as session:
             session.exec(delete(BrokerTradeRow))
             for t in trades:
-                session.add(BrokerTradeRow(trading_day=day, raw=json.dumps(t, default=str)))
+                session.add(BrokerTradeRow(trading_day=day, raw=json.dumps(t, default=_json_safe)))
             session.commit()
         return len(trades)
 
@@ -327,7 +345,7 @@ class Repository:
             result = session.exec(
                 delete(OptionChainSnapshotRow).where(
                     col(OptionChainSnapshotRow.expiry).is_not(None),
-                    OptionChainSnapshotRow.expiry < cutoff,
+                    col(OptionChainSnapshotRow.expiry) < cutoff,
                 )
             )
             session.commit()

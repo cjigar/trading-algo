@@ -58,14 +58,23 @@ def bootstrap_schema(engine: Engine, *, settings=None, retries: int = 1) -> None
 
     _with_retry(engine, retries, lambda conn: _install_extension(conn))
     SQLModel.metadata.create_all(engine)
+
+    # Add columns introduced after a table first existed BEFORE creating declared indexes. A
+    # model-declared index on such a column (e.g. the expiry index on option_chain_snapshots) is
+    # emitted by _ensure_declared_indexes; on an already-live table that predates the column, the
+    # index DDL runs against a column that create_all cannot add — so the column must land first.
+    # (Missed by tests because a fresh DB gets the column from create_all; only an existing table
+    # hits the gap — which is exactly production.)
+    with _autocommit(engine) as conn:
+        _ensure_chain_columns(conn)
+        _ensure_index_spot_columns(conn)
+
     _ensure_declared_indexes(engine)
 
     with _autocommit(engine) as conn:
         for table, time_column in HYPERTABLES.items():
             _ensure_primary_key(conn, table, time_column)
             _ensure_hypertable(conn, table, time_column, chunk_days)
-        _ensure_chain_columns(conn)
-        _ensure_index_spot_columns(conn)
         _ensure_compression(conn, CHAIN_TABLE, compress_days)
         _ensure_retention(conn, CHAIN_TABLE, retention_days)
         _ensure_chain_aggregate(conn, bucket_seconds)

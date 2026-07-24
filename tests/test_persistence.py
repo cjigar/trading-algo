@@ -224,3 +224,24 @@ def test_latest_vwap_for_returns_newest_nonnull_per_token(repo: Repository):
 
 def test_latest_vwap_for_empty_tokens_is_empty(repo: Repository):
     assert repo.latest_vwap_for([]) == {}
+
+
+def test_replace_broker_positions_survives_unserializable_value(repo: Repository):
+    """A broker report value whose str() raises (e.g. __str__ returns None) must not crash the
+    persist — it froze the whole broker refresh in production every cycle."""
+    class _BadStr:
+        def __str__(self):
+            return None  # type: ignore[return-value]  # makes str() raise TypeError
+
+    n = repo.replace_broker_positions([{"tok": "T1", "weird": _BadStr(), "trdSym": "X"}])
+    assert n == 1
+    got = repo.latest_broker_positions()
+    assert got and got[0]["tok"] == "T1"  # persisted despite the hostile value
+
+
+def test_replace_broker_trades_survives_unserializable_value(repo: Repository):
+    class _BadStr:
+        def __str__(self):
+            return None  # type: ignore[return-value]
+
+    assert repo.replace_broker_trades([{"tok": "T1", "weird": _BadStr()}]) == 1
