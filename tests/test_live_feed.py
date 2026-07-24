@@ -119,6 +119,14 @@ def test_coordinator_subscribe_option():
     assert any("11536" in toks and not isidx for toks, isidx in neo.subscriptions)
 
 
+def test_coordinator_subscribe_index():
+    neo = FakeNeo()
+    coord = LiveFeedCoordinator(_settings(), neo, on_tick=lambda t: None, on_order_event=lambda e: None)
+    coord.start()
+    coord.subscribe_index("26017", ExchangeSegment.NSE_CM)  # India VIX
+    assert any("26017" in toks and isidx for toks, isidx in neo.subscriptions)
+
+
 # -- End-to-end: live ticks drive the orchestrator pipeline ----------------------------
 
 

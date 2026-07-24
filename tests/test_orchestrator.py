@@ -132,6 +132,32 @@ def test_write_index_spots_omits_futures_without_a_tick(engine):
     assert row.fut_ltp == "0" and row.fut_updated_at is None
 
 
+def test_write_index_spots_publishes_india_vix(engine):
+    orch, _ = _build(engine)
+    orch.register_index_token(INDEX_TOKEN, Underlying.NIFTY)
+    orch._ltp[INDEX_TOKEN] = Decimal("23800")
+    # India VIX is published as a plain-string entry ("INDIAVIX"), not an Underlying.
+    orch._vix_token = "26017"
+    orch._ltp["26017"] = Decimal("13.42")
+
+    orch.write_index_spots()
+
+    rows = {r.underlying: r for r in Repository(engine).index_spots()}
+    assert rows["INDIAVIX"].ltp == "13.42"
+    assert rows["INDIAVIX"].fut_ltp == "0"  # VIX has no future
+
+
+def test_write_index_spots_omits_vix_without_a_tick(engine):
+    orch, _ = _build(engine)
+    orch.register_index_token(INDEX_TOKEN, Underlying.NIFTY)
+    orch._ltp[INDEX_TOKEN] = Decimal("23800")
+    orch._vix_token = "26017"  # configured but no tick yet
+
+    orch.write_index_spots()
+
+    assert "INDIAVIX" not in {r.underlying for r in Repository(engine).index_spots()}
+
+
 @freeze_time("2025-01-27")
 def test_paper_pipeline_entry_and_exit(engine):
     orch, sm = _build(engine)

@@ -69,6 +69,7 @@ class Orchestrator:
         self._ltp: dict[str, Decimal] = {}  # instrument_token -> last ltp
         self._underlying_token: dict[str, Underlying] = {}  # index token -> underlying
         self._fut_token: dict[str, Underlying] = {}  # near-month futures token -> underlying (ticker)
+        self._vix_token: str | None = None  # India VIX index token (display-only ticker entry)
         self._lock = threading.RLock()
 
         self._repo: Repository = repo or Repository(create_engine_from_settings(self._settings))
@@ -235,6 +236,7 @@ class Orchestrator:
         # Subscribe each underlying's near-month future so its live LTP feeds the rate ticker.
         # Display-only: never traded, and failure here must not affect index/option feeds.
         self._subscribe_index_futures()
+        self._subscribe_india_vix()
         if not subscribed:
             log.warning("no_index_tokens_configured",
                         hint="set ALGO_NIFTY_INDEX_TOKEN / ALGO_SENSEX_INDEX_TOKEN")
@@ -321,6 +323,20 @@ class Orchestrator:
             except Exception:  # noqa: BLE001
                 log.exception("index_future_subscribe_failed", underlying=u.value)
 
+    def _subscribe_india_vix(self) -> None:
+        """Subscribe the India VIX index so its LTP feeds the rate ticker. Display-only and
+        fail-soft: it is not an Underlying and its absence/failure must not affect the feeds the
+        algo trades on."""
+        token = self._settings.india_vix_token.strip()
+        if not token or self._coordinator is None:
+            return
+        try:
+            self._vix_token = token
+            self._coordinator.subscribe_index(token, ExchangeSegment.NSE_CM)
+            log.info("india_vix_subscribed", token=token)
+        except Exception:  # noqa: BLE001
+            log.exception("india_vix_subscribe_failed", token=token)
+
     def write_index_spots(self) -> int:
         """Publish the current index spot (and near-month futures LTP) per underlying for the
         dashboard rate ticker.
@@ -334,6 +350,9 @@ class Orchestrator:
             for token, underlying in self._underlying_token.items()
             if token in self._ltp
         }
+        # India VIX is a display-only entry keyed by a plain string, not an Underlying.
+        if self._vix_token and self._vix_token in self._ltp:
+            spots["INDIAVIX"] = self._ltp[self._vix_token]
         futures = {
             underlying.value: self._ltp[token]
             for token, underlying in self._fut_token.items()
