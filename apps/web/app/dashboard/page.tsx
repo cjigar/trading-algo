@@ -165,10 +165,18 @@ export default function Dashboard() {
           {displayChain ? (
             <>
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                <Metric label="ATM strike" value={displayChain.atm ? displayChain.atm.toLocaleString() : "—"} />
-                <Metric label="Total CE OI" value={fmtOi(displayChain.ce_oi_total)} />
-                <Metric label="Total PE OI" value={fmtOi(displayChain.pe_oi_total)} />
-                <Metric label="Higher-OI side" value={displayChain.selected_side} />
+                {(() => {
+                  const w = displayChain.display_window;
+                  const s = w > 0 ? ` (ATM ±${w})` : "";
+                  return (
+                    <>
+                      <Metric label="ATM strike" value={displayChain.atm ? displayChain.atm.toLocaleString() : "—"} />
+                      <Metric label={`Total CE OI${s}`} value={fmtOi(displayChain.ce_oi_total)} />
+                      <Metric label={`Total PE OI${s}`} value={fmtOi(displayChain.pe_oi_total)} />
+                      <Metric label={`Higher-OI side${s}`} value={displayChain.selected_side} />
+                    </>
+                  );
+                })()}
               </div>
               <OptionChainTable chain={displayChain} />
             </>

@@ -135,7 +135,7 @@ export type ChainStrike = {
 };
 export type Chain = {
   underlying: string | null; atm: number | null; ce_oi_total: number; pe_oi_total: number;
-  selected_side: string; per_strike: ChainStrike[];
+  selected_side: string; display_window: number; per_strike: ChainStrike[];
 };
 export type StreamPayload = {
   state: AlgoState; pnl: PnL; positions: Position[]; orders: Order[];
