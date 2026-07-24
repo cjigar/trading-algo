@@ -130,6 +130,7 @@ class ChainSummary:
     pe_oi_total: int
     selected_side: str  # "CE" | "PE" | "—"
     atm: Decimal | None = None
+    display_window: int = 0  # strikes each side of ATM the view/totals were narrowed to (0 = full)
 
 
 def _resolve_atm(per_strike: list[ChainStrike]) -> Decimal | None:
@@ -150,6 +151,7 @@ def summarize_chain(
     oi_anchors: dict[int, dict[str, int]] | None = None,
     trend_windows: list[int] | None = None,
     flat_threshold: int = 0,
+    display_window: int | None = None,
 ) -> ChainSummary:
     """Pivot latest option-chain snapshot rows (with .strike/.option_type/.oi/.ltp/.instrument_token)
     into a per-strike CE/PE view: OI, intraday change-in-OI (vs the day-open baseline), the
@@ -179,12 +181,9 @@ def summarize_chain(
         )
 
     per_strike: list[ChainStrike] = []
-    ce_total = pe_total = 0
     for strike in sorted(by_strike):
         ce = by_strike[strike].get("CE", (0, Decimal(0), 0, "", None, None))
         pe = by_strike[strike].get("PE", (0, Decimal(0), 0, "", None, None))
-        ce_total += ce[0]
-        pe_total += pe[0]
         per_strike.append(ChainStrike(
             strike=strike, ce_oi=ce[0], ce_ltp=ce[1], ce_chg_oi=ce[2],
             pe_oi=pe[0], pe_ltp=pe[1], pe_chg_oi=pe[2],
@@ -198,8 +197,18 @@ def summarize_chain(
     if atm is not None:
         per_strike = [replace(s, is_atm=(s.strike == atm)) for s in per_strike]
 
+    # Narrow to the display window (ATM ±N by position) so the view — and the totals below —
+    # focus on the strikes around ATM. A None/0 window keeps the full captured chain.
+    window = display_window or 0
+    if window > 0 and atm is not None:
+        idx = next((i for i, s in enumerate(per_strike) if s.strike == atm), None)
+        if idx is not None:
+            per_strike = per_strike[max(0, idx - window): idx + window + 1]
+
+    ce_total = sum(s.ce_oi for s in per_strike)
+    pe_total = sum(s.pe_oi for s in per_strike)
     selected = "CE" if ce_total > pe_total else "PE" if pe_total > ce_total else "—"
-    return ChainSummary(per_strike, ce_total, pe_total, selected, atm)
+    return ChainSummary(per_strike, ce_total, pe_total, selected, atm, display_window=window)
 
 
 def _to_decimal(v: object) -> Decimal:
