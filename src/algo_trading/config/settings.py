@@ -98,8 +98,8 @@ class Settings(BaseSettings):
     chain_feed_window: int = 20
     # Strikes each side of ATM the DASHBOARD chain view shows (and totals/higher-OI side aggregate
     # over). View-only: independent of strike_window (strategy) and chain_feed_window (capture).
-    # 0 = show the full captured chain.
-    chain_display_window: int = 7
+    # Clamped to what was captured, so set it <= chain_feed_window. 0 = show the full captured chain.
+    chain_display_window: int = Field(default=7, ge=0)
     otm_strikes: int = 3  # strikes OTM to sell (CE=ATM+3, PE=ATM-3)
     strike_step: Decimal = Decimal("50")  # NIFTY strike interval
     sensex_strike_step: Decimal = Decimal("100")  # SENSEX strike interval
