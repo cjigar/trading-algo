@@ -115,6 +115,7 @@ def _chain_out_with_trends(bridge: StateBridge, settings: Settings, underlying: 
         bridge.chain(underlying), underlying, bridge.chain_oi_baseline(underlying),
         oi_anchors=bridge.chain_oi_anchors(windows, underlying),
         trend_windows=windows, flat_threshold=settings.oi_trend_flat_threshold,
+        display_window=settings.chain_display_window,
     )
 
 

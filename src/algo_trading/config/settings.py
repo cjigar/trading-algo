@@ -96,6 +96,10 @@ class Settings(BaseSettings):
     # strikes each side of ATM to subscribe/capture for the chain VIEW (±20 both indices = 166
     # scrips, within Kotak's 200/subscribe cap; strategy still aggregates OI over strike_window)
     chain_feed_window: int = 20
+    # Strikes each side of ATM the DASHBOARD chain view shows (and totals/higher-OI side aggregate
+    # over). View-only: independent of strike_window (strategy) and chain_feed_window (capture).
+    # 0 = show the full captured chain.
+    chain_display_window: int = 7
     otm_strikes: int = 3  # strikes OTM to sell (CE=ATM+3, PE=ATM-3)
     strike_step: Decimal = Decimal("50")  # NIFTY strike interval
     sensex_strike_step: Decimal = Decimal("100")  # SENSEX strike interval

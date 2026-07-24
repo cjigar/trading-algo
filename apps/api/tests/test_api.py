@@ -126,6 +126,17 @@ def test_chain(client, auth, repo):
     assert row["ce_oi_trends"]["1m"]["delta"] is None
 
 
+def test_chain_echoes_display_window(client, auth, repo):
+    repo.write_chain_snapshots([
+        {"underlying": "NIFTY", "strike": "23000", "option_type": "CE", "instrument_token": "C0",
+         "oi": 5000, "ltp": "100", "volume": 1, "timestamp": datetime(2025, 1, 15, 10, 0)},
+        {"underlying": "NIFTY", "strike": "23000", "option_type": "PE", "instrument_token": "P0",
+         "oi": 1000, "ltp": "100", "volume": 1, "timestamp": datetime(2025, 1, 15, 10, 0)},
+    ])
+    chain = client.get("/api/chain", params={"underlying": "NIFTY"}, headers=auth).json()
+    assert chain["display_window"] == 7  # setting plumbed through the route
+
+
 def test_chain_oi_trends_with_history(client, auth, repo):
     from datetime import timedelta
     now = datetime.utcnow()

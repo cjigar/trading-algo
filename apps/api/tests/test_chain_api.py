@@ -31,3 +31,23 @@ def test_chain_out_greeks_null_when_absent():
     rows = [_row("23000", "CE", "C1"), _row("23000", "PE", "P1")]
     out = chain_out(rows)
     assert out.per_strike[0].ce_greeks is None
+
+
+def test_chain_out_applies_display_window():
+    # ltp="0" -> _resolve_atm's priced branch is skipped -> ATM falls back to the middle strike
+    # (23000), so the ±7 window is centered there deterministically.
+    rows = []
+    for k in range(23000 - 20 * 50, 23000 + 20 * 50 + 50, 50):
+        rows += [_row(str(k), "CE", f"C{k}", ltp="0"), _row(str(k), "PE", f"P{k}", ltp="0")]
+    out = chain_out(rows, "NIFTY", display_window=7)
+    assert out.display_window == 7
+    assert len(out.per_strike) == 15
+    assert out.ce_oi_total == 15 * 100 and out.pe_oi_total == 15 * 100
+
+
+def test_chain_out_full_chain_when_window_zero():
+    rows = []
+    for k in range(23000 - 10 * 50, 23000 + 10 * 50 + 50, 50):
+        rows += [_row(str(k), "CE", f"C{k}", ltp="0"), _row(str(k), "PE", f"P{k}", ltp="0")]
+    out = chain_out(rows, "NIFTY", display_window=0)
+    assert len(out.per_strike) == 21 and out.display_window == 0
