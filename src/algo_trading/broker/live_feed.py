@@ -102,14 +102,6 @@ class LiveFeedCoordinator:
             is_index=False,
         )
 
-    def subscribe_index(self, instrument_token: str, exchange_segment: ExchangeSegment) -> None:
-        """Subscribe to an index quote (e.g. India VIX) added after ``start``. ``is_index=True``
-        marks it as an index tick — it carries no OI and drives no option handling."""
-        self._feed.subscribe(
-            [{"instrument_token": instrument_token, "exchange_segment": exchange_segment.value}],
-            is_index=True,
-        )
-
     def is_stale(self) -> bool:
         return self._feed.is_stale()
 

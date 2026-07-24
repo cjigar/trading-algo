@@ -155,6 +155,10 @@ def main() -> None:
     # views track the real Kotak account instead of a boot-time snapshot.
     broker_every = max(1, settings.broker_refresh_seconds)
     since_broker = 0
+    # India VIX is not on the Kotak feed, so it is pulled from NSE's public API on its own (slow)
+    # cadence — it updates only every few minutes.
+    vix_every = max(1, settings.india_vix_seconds)
+    since_vix = vix_every  # fetch on the first tick so the chip appears without waiting a cycle
     # Monotonic timestamp the feed first went stale (None while healthy), for hard recovery.
     stale_since: float | None = None
     # Expiry-aligned retention: purge each week's snapshots once its expiry passes. Runs once at
@@ -220,6 +224,13 @@ def main() -> None:
                 except Exception:  # noqa: BLE001
                     log.exception("broker_account_refresh_failed")
                 since_broker = 0
+            since_vix += 1
+            if since_vix >= vix_every:
+                try:
+                    orch.refresh_india_vix()  # NSE-sourced India VIX for the dashboard ticker
+                except Exception:  # noqa: BLE001
+                    log.exception("india_vix_refresh_failed")
+                since_vix = 0
             time.sleep(1.0)
     finally:
         scheduler.shutdown()
