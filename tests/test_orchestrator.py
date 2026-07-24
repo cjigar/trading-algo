@@ -132,30 +132,43 @@ def test_write_index_spots_omits_futures_without_a_tick(engine):
     assert row.fut_ltp == "0" and row.fut_updated_at is None
 
 
-def test_write_index_spots_publishes_india_vix(engine):
+def test_refresh_india_vix_publishes_from_nse(engine, monkeypatch):
+    from datetime import date
+
+    from algo_trading.feed.india_vix import VixQuote
+
     orch, _ = _build(engine)
-    orch.register_index_token(INDEX_TOKEN, Underlying.NIFTY)
-    orch._ltp[INDEX_TOKEN] = Decimal("23800")
-    # India VIX is published as a plain-string entry ("INDIAVIX"), not an Underlying.
-    orch._vix_token = "26017"
-    orch._ltp["26017"] = Decimal("13.42")
+    monkeypatch.setattr(
+        "algo_trading.feed.india_vix.fetch_india_vix",
+        lambda *a, **k: VixQuote(last=Decimal("14.45"), prev_close=Decimal("13.48"),
+                                 prev_day=date(2026, 7, 23)),
+    )
+    assert orch.refresh_india_vix() is True
 
-    orch.write_index_spots()
+    r = Repository(engine)
+    rows = {row.underlying: row for row in r.index_spots()}
+    assert rows["INDIAVIX"].ltp == "14.45"  # today's level
+    # Prior-day close is written under NSE's previous trading day, so the day-change is correct.
+    assert r.prev_index_closes()["INDIAVIX"] == Decimal("13.48")
 
-    rows = {r.underlying: r for r in Repository(engine).index_spots()}
-    assert rows["INDIAVIX"].ltp == "13.42"
-    assert rows["INDIAVIX"].fut_ltp == "0"  # VIX has no future
 
-
-def test_write_index_spots_omits_vix_without_a_tick(engine):
+def test_refresh_india_vix_fail_soft_when_fetch_returns_none(engine, monkeypatch):
     orch, _ = _build(engine)
-    orch.register_index_token(INDEX_TOKEN, Underlying.NIFTY)
-    orch._ltp[INDEX_TOKEN] = Decimal("23800")
-    orch._vix_token = "26017"  # configured but no tick yet
+    monkeypatch.setattr("algo_trading.feed.india_vix.fetch_india_vix", lambda *a, **k: None)
+    assert orch.refresh_india_vix() is False
+    assert "INDIAVIX" not in {row.underlying for row in Repository(engine).index_spots()}
 
-    orch.write_index_spots()
 
-    assert "INDIAVIX" not in {r.underlying for r in Repository(engine).index_spots()}
+def test_refresh_india_vix_disabled_when_source_off(engine, monkeypatch):
+    orch, _ = _build(engine)
+    object.__setattr__(orch._settings, "india_vix_source", "off")
+    called = {"n": 0}
+    def _boom(*a, **k):
+        called["n"] += 1
+        raise AssertionError("should not fetch when disabled")
+    monkeypatch.setattr("algo_trading.feed.india_vix.fetch_india_vix", _boom)
+    assert orch.refresh_india_vix() is False
+    assert called["n"] == 0
 
 
 @freeze_time("2025-01-27")

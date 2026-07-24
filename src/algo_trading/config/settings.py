@@ -66,10 +66,10 @@ class Settings(BaseSettings):
     nifty_index_token: str = ""
     banknifty_index_token: str = ""
     sensex_index_token: str = ""
-    # India VIX (NSE volatility index) token — a separately-quoted instrument shown on the rate
-    # ticker beside the indices. Display-only: subscribed for its LTP, never traded, and not an
-    # Underlying (so it skips the segment/candle/futures machinery).
-    india_vix_token: str = ""
+    # India VIX on the rate ticker. Kotak Neo does not carry India VIX, so it is sourced from NSE's
+    # public allIndices API instead. "nse" enables the fetch; "off" disables it (no VIX chip).
+    india_vix_source: str = "nse"
+    india_vix_seconds: int = 60  # NSE fetch cadence — India VIX updates only every few minutes
 
     # --- Strategy selection ---
     strategy: str = "oi_selling"  # oi_selling | vwap_breakout
