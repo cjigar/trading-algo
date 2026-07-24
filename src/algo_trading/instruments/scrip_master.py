@@ -11,6 +11,7 @@ The class fails closed: a parse that yields no option rows raises rather than tr
 
 from __future__ import annotations
 
+import functools
 import re
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
@@ -85,20 +86,35 @@ def _pick_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
     return None
 
 
-# Kotak scrip-master expiries are seconds since 1980-01-01 (the NSE NNF epoch), not the Unix epoch.
+# Kotak encodes a numeric expiry as seconds since an exchange-specific epoch. NSE uses the NNF
+# epoch (1980-01-01); BSE uses the Unix epoch (1970-01-01). Using the wrong base shifts every
+# numeric expiry by the 10-year gap between them — e.g. a BSE weekly parsed against the NNF epoch
+# lands ~10 years in the future, which silently corrupts SENSEX greeks (T off by a decade),
+# expiry-aligned retention, and weekly-expiry selection.
 _NNF_EPOCH = datetime(1980, 1, 1, tzinfo=UTC)
+_UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+_BSE_SEGMENTS = frozenset({ExchangeSegment.BSE_FO, ExchangeSegment.BSE_CM})
 
 
-def default_expiry_parser(value: Any) -> date | None:
-    """Parse an expiry from an ISO/dd-Mon-yyyy string, or Kotak's seconds-since-1980 integer."""
+def _epoch_for_segment(segment: ExchangeSegment) -> datetime:
+    """Epoch base for a numeric expiry: Unix (1970) on BSE, NNF (1980) on NSE."""
+    return _UNIX_EPOCH if segment in _BSE_SEGMENTS else _NNF_EPOCH
+
+
+def default_expiry_parser(value: Any, epoch: datetime = _NNF_EPOCH) -> date | None:
+    """Parse an expiry from an ISO/dd-Mon-yyyy string, or Kotak's seconds-since-``epoch`` integer.
+
+    ``epoch`` is the base for the numeric form (NNF 1980-01-01 for NSE, Unix 1970-01-01 for BSE);
+    it defaults to the NSE epoch for backward compatibility.
+    """
     if value in (None, "", "nan"):
         return None
     text = str(value).strip()
-    # numeric -> seconds since 1980-01-01 (Kotak NNF epoch)
+    # numeric -> seconds since the exchange epoch
     try:
-        epoch = int(float(text))
-        if epoch > 10_000:
-            return (_NNF_EPOCH + timedelta(seconds=epoch)).date()
+        secs = int(float(text))
+        if secs > 10_000:
+            return (epoch + timedelta(seconds=secs)).date()
     except (ValueError, OverflowError):
         pass
     for fmt in ("%Y-%m-%d", "%d-%b-%Y", "%d-%m-%Y", "%d%b%Y", "%Y%m%d"):
@@ -138,11 +154,17 @@ class ScripMaster:
         df: pd.DataFrame,
         segment: ExchangeSegment,
         *,
-        expiry_parser: Callable[[Any], date | None] = default_expiry_parser,
+        expiry_parser: Callable[[Any], date | None] | None = None,
         strike_scale: Decimal = Decimal("1"),
     ) -> ScripMaster:
         """Parse a scrip-master frame. ``strike_scale`` converts the raw strike to rupees — Kotak's
-        ``dStrikePrice`` is in paise, so real downloads pass 0.01 (see ``download``/``from_csv``)."""
+        ``dStrikePrice`` is in paise, so real downloads pass 0.01 (see ``download``/``from_csv``).
+
+        Numeric expiries are parsed against the segment's epoch (Unix on BSE, NNF on NSE); pass an
+        explicit ``expiry_parser`` to override."""
+        parser = expiry_parser or functools.partial(
+            default_expiry_parser, epoch=_epoch_for_segment(segment)
+        )
         cols = {field: _pick_column(df, cands) for field, cands in COLUMN_CANDIDATES.items()}
         required = ["trading_symbol", "expiry", "strike", "option_type", "lot_size"]
         missing = [f for f in required if cols[f] is None]
@@ -164,7 +186,7 @@ class ScripMaster:
             )
             if underlying is None:
                 continue
-            expiry = expiry_parser(row[cols["expiry"]])
+            expiry = parser(row[cols["expiry"]])
             if expiry is None:
                 continue
             token = str(row[token_col]).strip()
