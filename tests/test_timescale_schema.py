@@ -266,3 +266,28 @@ def test_aggregate_and_raw_paths_agree(fresh_db):
     # Before any tick -> token omitted.
     assert repo.oi_at_or_before(base - timedelta(minutes=1), trading_day=day) == {}
     engine.dispose()
+
+
+def test_bootstrap_adds_new_columns_to_legacy_table(fresh_db):
+    """Regression: a table that predates the vwap/expiry/greeks columns must gain them on
+    bootstrap. Column-adds must run before index/hypertable DDL so an indexed new column can never
+    have its index created before the column exists (the ordering that crash-looped production)."""
+    setup = create_engine_from_url(fresh_db, create=False)
+    with setup.connect() as conn:
+        conn.execute(text(LEGACY_CHAIN_DDL))  # no vwap/expiry/iv/delta/gamma/theta/vega
+        conn.commit()
+    setup.dispose()
+
+    engine = create_engine_from_url(fresh_db, settings=SchemaTuning())  # full bootstrap, must not raise
+    try:
+        with engine.connect() as conn:
+            cols = {
+                r[0] for r in conn.execute(text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'option_chain_snapshots'"
+                ))
+            }
+        for c in ("vwap", "expiry", "iv", "delta", "gamma", "theta", "vega"):
+            assert c in cols, f"{c} column not added to legacy table"
+    finally:
+        engine.dispose()
