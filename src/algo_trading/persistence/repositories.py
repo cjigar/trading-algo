@@ -18,7 +18,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlmodel import Session, col, select
 
 from algo_trading.domain.enums import AlgoState, ExchangeSegment, OptionType, Side, Underlying
-from algo_trading.domain.models import Instrument, OrderEvent, OrderRequest, Trade
+from algo_trading.domain.models import Candle, Instrument, OrderEvent, OrderRequest, Trade
 from algo_trading.persistence.bootstrap import CHAIN_AGG_VIEW, CHAIN_TABLE, agg_bucket_seconds
 from algo_trading.persistence.db import (
     AlgoStateRow,
@@ -29,6 +29,7 @@ from algo_trading.persistence.db import (
     ControlCommandRow,
     IndexSpotRow,
     LiveQuoteRow,
+    NiftyCandleRow,
     OptionChainSnapshotRow,
     OrderEventRow,
     OrderRow,
@@ -146,12 +147,26 @@ def _instrument_from_row(row: OrderRow | TradeRow) -> Instrument:
     )
 
 
+def _candle_from_row(row: NiftyCandleRow) -> Candle:
+    return Candle(
+        symbol=f"{row.underlying}-IDX",
+        start=row.start,
+        end=row.end,
+        open=Decimal(row.open),
+        high=Decimal(row.high),
+        low=Decimal(row.low),
+        close=Decimal(row.close),
+        volume=Decimal(row.volume),
+    )
+
+
 class Repository:
     """Thin data-access object. One instance per process; safe for the single-writer loop."""
 
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
         self._bucket_seconds: int | None = None
+        self._nifty_keep_days = 7
 
     # -- Orders (idempotent state + append-only events) --------------------------------
 
@@ -736,6 +751,46 @@ class Repository:
                 if r.underlying not in out:  # desc order -> first seen per underlying is most recent
                     out[r.underlying] = _safe_decimal(r.ltp)
         return out
+
+    # -- Nifty candles (bounded, retention-trimmed plain table) -------------------------
+
+    def upsert_nifty_candle(
+        self, underlying: str, timeframe_minutes: int, candle: Candle, trading_day: date | None = None
+    ) -> None:
+        """Persist one closed index candle idempotently, then trim old rows. Keyed on
+        (underlying, timeframe_minutes, start): a candle re-seen after a restart is a no-op."""
+        day = _today_str(trading_day)
+        stmt = pg_insert(NiftyCandleRow).values(
+            trading_day=day, underlying=str(underlying), timeframe_minutes=int(timeframe_minutes),
+            start=candle.start, end=candle.end,
+            open=str(candle.open), high=str(candle.high), low=str(candle.low),
+            close=str(candle.close), volume=str(candle.volume),
+        ).on_conflict_do_nothing(index_elements=["underlying", "timeframe_minutes", "start"])
+        with Session(self._engine) as session:
+            session.exec(stmt)
+            session.commit()
+        self.trim_nifty_candles(self._nifty_keep_days)
+
+    def nifty_candles(self, underlying: str, timeframe_minutes: int, lookback_days: int) -> list[Candle]:
+        """Closed candles for (underlying, timeframe), oldest -> newest, within the lookback."""
+        cutoff = (datetime.utcnow() - timedelta(days=lookback_days))
+        with Session(self._engine) as session:
+            rows = list(session.exec(
+                select(NiftyCandleRow)
+                .where(NiftyCandleRow.underlying == str(underlying))
+                .where(NiftyCandleRow.timeframe_minutes == int(timeframe_minutes))
+                .where(NiftyCandleRow.start >= cutoff)
+                .order_by(col(NiftyCandleRow.start))
+            ))
+        return [_candle_from_row(r) for r in rows]
+
+    def trim_nifty_candles(self, keep_days: int) -> int:
+        """Delete candles older than ``keep_days`` days. Returns the number deleted."""
+        cutoff = datetime.utcnow() - timedelta(days=keep_days)
+        with Session(self._engine) as session:
+            result = session.exec(delete(NiftyCandleRow).where(NiftyCandleRow.start < cutoff))
+            session.commit()
+            return result.rowcount or 0
 
     # -- Audit (append-only) -----------------------------------------------------------
 
