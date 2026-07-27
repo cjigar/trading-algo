@@ -11,7 +11,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
+from algo_trading.analytics.indicators import IndicatorPanel, compute_panel
 from algo_trading.config.settings import Settings
 from algo_trading.domain.enums import AlgoState
 from algo_trading.domain.models import Position
@@ -57,6 +59,7 @@ class StateBridge:
         # A fresh engine over the SAME PostgreSQL database the loop writes to (separate process).
         self._repo = Repository(create_engine_from_settings(settings))
         self._quote_max_age = float(getattr(settings, "live_quote_max_age_seconds", 60))
+        self._settings = settings
 
     def read_state(self) -> DashboardState:
         trades = self._repo.trades_for_day()
@@ -95,6 +98,32 @@ class StateBridge:
             tokens, max_age_seconds=self._quote_max_age
         ).items():
             tracker.on_price(token, ltp)
+
+    def indicator_panel(self) -> IndicatorPanel:
+        """Compute the display-only Nifty indicator panel from persisted 5m/15m candles.
+
+        Current price for level-break reads (VWAP/ORB/SuperTrend/Bollinger) comes from the live
+        index spot; the indicator series themselves are computed from closed candles. Read-only.
+        """
+        s = self._settings
+        lookback = int(getattr(s, "nifty_candle_retention_days", 7))
+        candles_by_tf = {
+            tf: self._repo.nifty_candles("NIFTY", tf, lookback_days=lookback)
+            for tf in s.indicator_timeframes
+        }
+        price = None
+        for row in self._repo.index_spots():
+            if row.underlying == "NIFTY":
+                price = Decimal(row.ltp)
+                break
+        if price is None:
+            newest = max((c[-1] for c in candles_by_tf.values() if c), default=None,
+                         key=lambda c: c.start)
+            price = newest.close if newest is not None else None
+        return compute_panel(
+            candles_by_tf, price, s.market_open, int(getattr(s, "orb_minutes", 30)),
+            ZoneInfo("Asia/Kolkata"), as_of=datetime.utcnow(),
+        )
 
     def chain(self, underlying: str | None = None) -> list:
         """Latest option-chain snapshots, optionally filtered to one underlying."""
