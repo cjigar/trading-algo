@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Column, Engine, Identity, Index
+from sqlalchemy import BigInteger, Column, Engine, Identity, Index, UniqueConstraint
 from sqlmodel import Field, SQLModel, create_engine
 
 from algo_trading.config.settings import is_postgres_url
@@ -149,6 +149,33 @@ class IndexSpotRow(SQLModel, table=True):
     # futures feed ticks.
     fut_ltp: str = "0"
     fut_updated_at: datetime | None = None
+
+
+class NiftyCandleRow(SQLModel, table=True):
+    """Closed index candles per (underlying, timeframe), for the display-only indicator panel.
+
+    A bounded, retention-trimmed PLAIN table (not a hypertable): a few hundred rows per timeframe
+    is all the indicator read path needs. Unique on (underlying, timeframe_minutes, start) so a
+    candle re-persisted after a process restart is upserted in place rather than duplicated.
+    """
+
+    __tablename__ = "nifty_candles"
+    __table_args__ = (
+        UniqueConstraint("underlying", "timeframe_minutes", "start",
+                         name="uq_nifty_candle_key"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    trading_day: str = Field(index=True)
+    underlying: str = Field(index=True)
+    timeframe_minutes: int = Field(index=True)
+    start: datetime = Field(index=True)
+    end: datetime
+    open: str = "0"
+    high: str = "0"
+    low: str = "0"
+    close: str = "0"
+    volume: str = "0"
 
 
 class AuditEventRow(SQLModel, table=True):

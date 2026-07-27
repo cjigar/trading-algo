@@ -137,6 +137,17 @@ class Orchestrator:
             _underlying_symbol(u): CandleBuilder(_underlying_symbol(u), self._settings.candle_timeframe_minutes)
             for u in self._settings.underlyings
         }
+
+        # Display-only indicator candles: independent of the trading candle, built for Nifty on
+        # each configured timeframe and persisted for the read-side indicator panel.
+        self._indicator_builders: dict[tuple[Underlying, int], CandleBuilder] = {}
+        if getattr(self._settings, "indicators_enabled", False):
+            for u in self._settings.underlyings:
+                if u is not Underlying.NIFTY:
+                    continue
+                for tf in self._settings.indicator_timeframes:
+                    self._indicator_builders[(u, tf)] = CandleBuilder(_underlying_symbol(u), tf)
+
         self._exit_symbol_token: dict[str, str] = {}  # option token -> trading symbol
 
         self._wire_bus()
@@ -469,6 +480,9 @@ class Orchestrator:
 
         underlying = self._underlying_token.get(tick.instrument_token)
 
+        if underlying is not None and self._indicator_builders:
+            self._build_indicator_candles(underlying, tick)
+
         if self._oi_mode:
             # Route to the per-underlying chain manager (index -> its ATM window; option -> all
             # chains, each ignores tokens outside its window).
@@ -507,6 +521,19 @@ class Orchestrator:
         signals = self._strategy.on_candle(candle)
         for signal in signals:
             self._handle_signal(signal)
+
+    def _build_indicator_candles(self, underlying, tick) -> None:
+        """Feed an index tick into the per-timeframe indicator builders and persist any closed
+        candle. Display-only and fully isolated: a failure here must never disturb trading."""
+        for (u, tf), builder in self._indicator_builders.items():
+            if u is not underlying:
+                continue
+            try:
+                closed = builder.add_tick(tick)
+                if closed is not None:
+                    self._repo.upsert_nifty_candle(u.value, tf, closed)
+            except Exception:  # noqa: BLE001 - indicator persistence must not stall the pipeline
+                log.exception("indicator_candle_persist_failed", underlying=u.value, tf=tf)
 
     def evaluate_oi(self, now: Any = None) -> None:
         """Run each underlying's OI strategy once (called on a timer). No-op outside OI mode /
