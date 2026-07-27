@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 
 import type { BrokerPnL, IndexSpot } from "@/lib/api";
 
@@ -133,16 +133,19 @@ export function Tabs({ tabs, active, onChange }: { tabs: string[]; active: strin
   );
 }
 
-export function DataTable({ rows }: { rows: Record<string, unknown>[] }) {
+// Generic key/value table. Tabular figures give every digit the same width, so a value ticking
+// to a new number repaints in place without nudging column widths; nowrap keeps rows single-line.
+// Memoized so it only re-renders when its rows prop actually changes.
+export const DataTable = memo(function DataTable({ rows }: { rows: Record<string, unknown>[] }) {
   if (!rows.length) return <p className="py-6 text-neutral-500">No data.</p>;
   const cols = Object.keys(rows[0]!);
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+      <table className="w-full text-sm tabular-nums">
         <thead>
           <tr className="border-b border-neutral-800 text-left text-neutral-400">
             {cols.map((c) => (
-              <th key={c} className="px-3 py-2 font-normal">{c}</th>
+              <th key={c} className="whitespace-nowrap px-3 py-2 font-normal">{c}</th>
             ))}
           </tr>
         </thead>
@@ -150,7 +153,7 @@ export function DataTable({ rows }: { rows: Record<string, unknown>[] }) {
           {rows.map((r, i) => (
             <tr key={i} className="border-b border-neutral-900">
               {cols.map((c) => (
-                <td key={c} className="px-3 py-2">{String(r[c])}</td>
+                <td key={c} className="whitespace-nowrap px-3 py-2">{String(r[c])}</td>
               ))}
             </tr>
           ))}
@@ -158,4 +161,4 @@ export function DataTable({ rows }: { rows: Record<string, unknown>[] }) {
       </table>
     </div>
   );
-}
+});

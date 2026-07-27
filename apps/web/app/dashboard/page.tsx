@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
 
 import { AccountSummary, Banner, DataTable, Metric, SpotTicker, Tabs } from "@/components/ui";
 import { api, clearToken, type BrokerPnL, type Chain, type EnginePnL, type Greeks, type OiTrends } from "@/lib/api";
@@ -18,20 +18,36 @@ export default function Dashboard() {
   const [chainUnderlying, setChainUnderlying] = useState<string | null>(null);
   const [chainView, setChainView] = useState<Chain | null>(null);
 
-  // Orders, trades, positions and broker P&L now ride the SSE stream (3s), computed from the same
-  // snapshot so they stay in step. Only the config editor and a manually-selected (non-active)
-  // chain underlying still need a one-shot fetch.
-  const refresh = useCallback(async () => {
-    const [c, ch] = await Promise.all([api.config(), api.chain(chainUnderlying ?? undefined)]);
-    setConfig(c);
-    setChainView(ch);
-  }, [chainUnderlying]);
+  // Orders, trades, positions and broker P&L all ride the SSE stream (3s), computed from the same
+  // snapshot so they stay in step. Config and a manually-selected (non-active) chain underlying are
+  // the only things that still need their own fetch — and we scope those tightly so the live tabs
+  // (P&L especially) re-render on the single SSE clock alone, with no off-clock repaint.
 
+  // Config is effectively static during a session: fetch it once on mount and whenever the Config
+  // tab is opened (saveConfig refreshes it from its own response). No timer.
+  const loadConfig = useCallback(async () => {
+    try { setConfig(await api.config()); } catch { /* ignore */ }
+  }, []);
+  useEffect(() => { loadConfig().catch(() => {}); }, [loadConfig]);
+  useEffect(() => { if (tab === "Config") loadConfig().catch(() => {}); }, [tab, loadConfig]);
+
+  // The active underlying's chain rides the SSE stream (data.chain). Only a manually-selected
+  // NON-active underlying needs its own fetch — and only while the Option Chain tab is open. Poll
+  // that single case so the manual view stays live; every other tab stays purely on the SSE clock.
+  const activeUnderlying = data?.state?.active_underlying ?? null;
+  const manualChain =
+    tab === "Option Chain" && !!chainUnderlying && chainUnderlying !== activeUnderlying;
   useEffect(() => {
-    refresh().catch(() => {});
-    const id = setInterval(() => refresh().catch(() => {}), 5000);
-    return () => clearInterval(id);
-  }, [refresh]);
+    if (!manualChain) { setChainView(null); return; }
+    let alive = true;
+    const load = async () => {
+      try { const ch = await api.chain(chainUnderlying!); if (alive) setChainView(ch); }
+      catch { /* ignore */ }
+    };
+    load();
+    const id = setInterval(load, 5000);
+    return () => { alive = false; clearInterval(id); };
+  }, [manualChain, chainUnderlying]);
 
   async function control(cmd: "stop" | "flatten") {
     if (!confirm(`Confirm ${cmd.toUpperCase()}?`)) return;
@@ -57,10 +73,9 @@ export default function Dashboard() {
   const brokerPositions = data?.broker_positions ?? [];
   const brokerPnl = data?.broker_pnl ?? null;
   const underlyings = state?.oi_underlyings ?? [];
-  const activeUnderlying = state?.active_underlying ?? null;
   const shownUnderlying = chainUnderlying ?? chainView?.underlying ?? activeUnderlying;
   // When following today's active underlying, render the SSE chain (updates ~3s) so trend arrows
-  // stay live; for a manually selected non-active underlying fall back to the 5s poll.
+  // stay live; for a manually selected non-active underlying fall back to the scoped poll above.
   const followingToday = !chainUnderlying || chainUnderlying === activeUnderlying;
   const displayChain = followingToday && data?.chain ? data.chain : chainView;
 
@@ -241,14 +256,15 @@ function EngineFreshness({ engine }: { engine: EnginePnL | null }) {
   );
 }
 
-// Per-position realized P&L, most negative first (matches the API ordering).
-function BrokerPnLTable({ pnl }: { pnl: BrokerPnL }) {
+// Per-position realized P&L, most negative first (matches the API ordering). Memoized and
+// fixed-layout so live LTP/M2M ticks repaint the digits in place without reflowing columns.
+const BrokerPnLTable = memo(function BrokerPnLTable({ pnl }: { pnl: BrokerPnL }) {
   return (
     <div className="overflow-x-auto rounded-md border border-neutral-800">
-      <table className="w-full text-right text-sm tabular-nums">
+      <table className="w-full table-fixed text-right text-sm tabular-nums">
         <thead className="bg-neutral-900 text-xs uppercase text-neutral-400">
           <tr>
-            <th className="px-3 py-2 text-left">Symbol</th>
+            <th className="px-3 py-2 text-left w-[18%]">Symbol</th>
             <th className="px-3 py-2">Net qty</th>
             <th className="px-3 py-2">Avg buy</th>
             <th className="px-3 py-2">Avg sell</th>
@@ -286,7 +302,7 @@ function BrokerPnLTable({ pnl }: { pnl: BrokerPnL }) {
       </table>
     </div>
   );
-}
+});
 
 // Classic option-chain layout: calls on the left, strike in the middle, puts on the right.
 // Each side shows OI, intraday change-in-OI, and LTP; the OI cell carries a depth bar and the
@@ -329,7 +345,8 @@ function TrendCell({ trends, align }: { trends: OiTrends | undefined; align: "le
   );
 }
 
-function OptionChainTable({ chain }: { chain: Chain }) {
+// Memoized and fixed-layout: live LTP/greeks ticks repaint digits in place without column reflow.
+const OptionChainTable = memo(function OptionChainTable({ chain }: { chain: Chain }) {
   const rows = [...chain.per_strike].sort((a, b) => a.strike - b.strike);
   const maxOi = Math.max(1, ...rows.flatMap((r) => [r.ce_oi, r.pe_oi]));
   const bar = (oi: number, side: "ce" | "pe") => ({
@@ -414,4 +431,4 @@ function OptionChainTable({ chain }: { chain: Chain }) {
       </table>
     </div>
   );
-}
+});
