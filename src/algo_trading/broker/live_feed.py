@@ -14,11 +14,13 @@ shape or callback wiring only touches this file.
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from algo_trading.broker.market_data import FeedHandler
 from algo_trading.broker.order_feed import OrderFeedHandler, is_order_message
 from algo_trading.config.settings import Settings
+from algo_trading.core.scheduler import in_feed_window
 from algo_trading.domain.enums import ExchangeSegment, Underlying
 from algo_trading.domain.models import OrderEvent, Tick
 from algo_trading.observability.logging import get_logger
@@ -55,7 +57,12 @@ class LiveFeedCoordinator:
     ) -> None:
         self._settings = settings
         self._neo = neo_client
-        self._feed = FeedHandler(settings, on_tick=on_tick)
+        # Only reconnect during market hours — off-hours a dropped socket is left dead rather than
+        # chased (each reconnect leaks a socket+thread in the SDK; over a weekend that wedges the loop).
+        self._feed = FeedHandler(
+            settings, on_tick=on_tick,
+            reconnect_allowed=lambda: in_feed_window(datetime.now(UTC), settings),
+        )
         self._feed._neo = neo_client  # bind data without letting FeedHandler own on_message
         self._order_feed = OrderFeedHandler(on_event=on_order_event)
         self._order_feed.bind(neo_client)
