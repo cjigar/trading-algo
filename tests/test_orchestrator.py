@@ -18,10 +18,11 @@ from algo_trading.core.orchestrator import LiveModeNotArmedError, Orchestrator
 from algo_trading.domain.enums import (
     ExchangeSegment,
     OptionType,
+    Side,
     TradingMode,
     Underlying,
 )
-from algo_trading.domain.models import Instrument, Tick
+from algo_trading.domain.models import Instrument, Tick, Trade
 from algo_trading.instruments.option_resolver import WeeklyOptionResolver
 from algo_trading.instruments.scrip_master import ScripMaster
 from algo_trading.persistence.repositories import Repository
@@ -239,3 +240,127 @@ def test_control_command_stop_halts_and_flattens(engine):
     orch.process_control_commands()
     assert orch.risk.is_halted() is True
     assert orch.positions.open_position_count() == 0
+
+
+# -- Broker-sourced flatten --------------------------------------------------------------------
+
+
+class _FakeBroker:
+    """Minimal broker double exposing only what square_off_all reads."""
+
+    def __init__(self, positions, raise_on_read=False):
+        self._positions = positions
+        self._raise = raise_on_read
+
+    def positions(self):
+        if self._raise:
+            raise RuntimeError("broker read failed")
+        return self._positions
+
+
+def _capture_submits(orch):
+    submitted = []
+    orch._orders.submit = lambda req: submitted.append(req)  # noqa: SLF001 - test seam
+    return submitted
+
+
+def _seed_tracker_position(orch, sm, symbol, token, qty, side):
+    inst = next(i for i in sm._instruments if i.trading_symbol == symbol)  # noqa: SLF001
+    orch._positions.on_fill(  # noqa: SLF001
+        Trade(client_tag="seed", broker_order_id=None, instrument=inst,
+              side=side, quantity=qty, price=Decimal("100"))
+    )
+    return inst
+
+
+@freeze_time("2025-01-27")
+def test_square_off_sources_from_broker_when_tracker_empty(engine):
+    # The regression: nothing in the in-memory tracker, but the broker reports an open long.
+    orch, _sm = _build(engine)
+    orch._broker = _FakeBroker(  # noqa: SLF001
+        [{"trdSym": "NIFTY23200CE", "tok": "23200-CE", "exSeg": "nse_fo",
+          "flBuyQty": 75, "flSellQty": 0}]
+    )
+    assert orch.positions.open_position_count() == 0  # tracker is empty
+    submitted = _capture_submits(orch)
+
+    orch.square_off_all("test")
+
+    assert len(submitted) == 1
+    req = submitted[0]
+    assert req.side is Side.SELL          # SELL to close a long
+    assert req.quantity == 75
+    assert req.instrument.trading_symbol == "NIFTY23200CE"
+    assert req.is_exit is True
+
+
+@freeze_time("2025-01-27")
+def test_square_off_buys_to_close_a_short(engine):
+    orch, _sm = _build(engine)
+    orch._broker = _FakeBroker(  # noqa: SLF001
+        [{"trdSym": "NIFTY23200PE", "tok": "23200-PE", "exSeg": "nse_fo",
+          "flBuyQty": 0, "flSellQty": 75}]
+    )
+    submitted = _capture_submits(orch)
+
+    orch.square_off_all("test")
+
+    assert len(submitted) == 1
+    assert submitted[0].side is Side.BUY  # BUY to close a short
+    assert submitted[0].quantity == 75
+
+
+@freeze_time("2025-01-27")
+def test_square_off_dedupes_broker_and_tracker_by_symbol(engine):
+    orch, sm = _build(engine)
+    _seed_tracker_position(orch, sm, "NIFTY23200CE", "23200-CE", 75, Side.BUY)
+    orch._broker = _FakeBroker(  # noqa: SLF001
+        [{"trdSym": "NIFTY23200CE", "tok": "23200-CE", "exSeg": "nse_fo",
+          "flBuyQty": 75, "flSellQty": 0}]
+    )
+    submitted = _capture_submits(orch)
+
+    orch.square_off_all("test")
+
+    assert len(submitted) == 1  # same symbol from both sources -> one order
+
+
+@freeze_time("2025-01-27")
+def test_square_off_includes_tracker_only_symbol(engine):
+    # Belt-and-braces: a position the tracker holds but the broker did not report is still closed.
+    orch, sm = _build(engine)
+    _seed_tracker_position(orch, sm, "NIFTY23200CE", "23200-CE", 75, Side.BUY)
+    orch._broker = _FakeBroker([])  # noqa: SLF001
+    submitted = _capture_submits(orch)
+
+    orch.square_off_all("test")
+
+    assert len(submitted) == 1
+    assert submitted[0].side is Side.SELL
+
+
+@freeze_time("2025-01-27")
+def test_square_off_falls_back_to_persisted_snapshot_on_broker_error(engine):
+    orch, _sm = _build(engine)
+    orch.repo.replace_broker_positions(
+        [{"trdSym": "NIFTY23200CE", "tok": "23200-CE", "exSeg": "nse_fo",
+          "flBuyQty": 75, "flSellQty": 0}]
+    )
+    orch._broker = _FakeBroker([], raise_on_read=True)  # noqa: SLF001
+    submitted = _capture_submits(orch)
+
+    orch.square_off_all("test")
+
+    assert len(submitted) == 1
+    assert submitted[0].instrument.trading_symbol == "NIFTY23200CE"
+
+
+@freeze_time("2025-01-27")
+def test_square_off_with_nothing_open_submits_no_orders(engine):
+    orch, _sm = _build(engine)
+    orch._broker = _FakeBroker([])  # noqa: SLF001
+    submitted = _capture_submits(orch)
+
+    orch.square_off_all("test")  # must not raise
+
+    assert submitted == []

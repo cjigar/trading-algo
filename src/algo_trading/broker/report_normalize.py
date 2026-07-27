@@ -41,6 +41,19 @@ TRADE_FIELD_CANDIDATES: dict[str, list[str]] = {
 }
 
 
+# our-field -> candidate position-report column names (case-insensitive, first match wins).
+# Covers both the Kotak shape (flBuyQty/flSellQty/tok/exSeg) and the PaperBroker shape
+# (netQty/trading_symbol). Net qty prefers an explicit ``net_qty`` field, else buy - sell.
+POSITION_FIELD_CANDIDATES: dict[str, list[str]] = {
+    "trading_symbol": ["trdSym", "pTrdSymbol", "tradingsymbol", "trading_symbol", "trdSymbol", "sym", "symbol"],
+    "instrument_token": ["tok", "instrument_token", "token", "pSymbol"],
+    "exchange_segment": ["exSeg", "exchange_segment", "exch", "seg"],
+    "net_qty": ["netQty", "net_qty", "netqty"],
+    "buy_qty": ["flBuyQty", "buyQty", "cfBuyQty", "dayBuyQty"],
+    "sell_qty": ["flSellQty", "sellQty", "cfSellQty", "daySellQty"],
+}
+
+
 def _pick(raw: dict, candidates: list[str]) -> Any:
     lower = {k.lower(): k for k in raw}
     for cand in candidates:
@@ -136,4 +149,33 @@ def normalize_trade_row(raw: dict) -> dict | None:
         "quantity": _to_int(qty),
         "price": _to_decimal(price),
         "timestamp": _parse_ts(_pick(raw, TRADE_FIELD_CANDIDATES["timestamp"])),
+    }
+
+
+def normalize_position_row(raw: dict) -> dict | None:
+    """Normalize a broker position row into the fields a flatten needs, or None.
+
+    ``net_qty`` is signed (positive = long, negative = short); it comes from an explicit ``netQty``
+    when present, otherwise ``buy_qty - sell_qty``. A row with ``net_qty == 0`` (squared intraday) is
+    returned as-is — the caller decides to skip it. Returns None only when the trading symbol is
+    missing, since without it no exit order can be placed.
+    """
+    symbol = _pick(raw, POSITION_FIELD_CANDIDATES["trading_symbol"])
+    if not symbol:
+        return None
+    net_raw = _pick(raw, POSITION_FIELD_CANDIDATES["net_qty"])
+    if net_raw is not None and str(net_raw).strip() != "":
+        net_qty = _to_int(net_raw)
+    else:
+        net_qty = _to_int(_pick(raw, POSITION_FIELD_CANDIDATES["buy_qty"])) - _to_int(
+            _pick(raw, POSITION_FIELD_CANDIDATES["sell_qty"])
+        )
+    underlying, option_type, _strike = _parse_symbol(str(symbol))
+    return {
+        "instrument_token": str(_pick(raw, POSITION_FIELD_CANDIDATES["instrument_token"]) or ""),
+        "trading_symbol": str(symbol),
+        "exchange_segment": str(_pick(raw, POSITION_FIELD_CANDIDATES["exchange_segment"]) or "nse_fo"),
+        "underlying": underlying,
+        "option_type": option_type,
+        "net_qty": net_qty,
     }

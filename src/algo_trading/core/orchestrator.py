@@ -15,11 +15,19 @@ from decimal import Decimal
 from typing import Any
 
 from algo_trading.broker.base import BrokerClient
+from algo_trading.broker.report_normalize import normalize_position_row
 from algo_trading.config.secrets import KotakSecrets, load_secrets
 from algo_trading.config.settings import Settings, get_settings
 from algo_trading.core.events import EventBus, Topic
-from algo_trading.domain.enums import AlgoState, ExchangeSegment, Side, TradingMode, Underlying
-from algo_trading.domain.models import OrderEvent, Signal, Tick, Trade
+from algo_trading.domain.enums import (
+    AlgoState,
+    ExchangeSegment,
+    OptionType,
+    Side,
+    TradingMode,
+    Underlying,
+)
+from algo_trading.domain.models import Instrument, OrderEvent, Signal, Tick, Trade
 from algo_trading.execution.exit_manager import ExitManager
 from algo_trading.execution.order_manager import OrderManager
 from algo_trading.execution.paper_broker import PaperBroker
@@ -45,6 +53,14 @@ class LiveModeNotArmedError(RuntimeError):
 def _underlying_symbol(underlying: Underlying) -> str:
     """Symbol used for the underlying's candle stream (index feed)."""
     return f"{underlying.value}-IDX"
+
+
+def _coerce_enum(enum_cls, value, default):
+    """Coerce a broker-supplied string to an enum, falling back for odd/unmapped values."""
+    try:
+        return enum_cls(value)
+    except (ValueError, KeyError):
+        return default
 
 
 class Orchestrator:
@@ -629,19 +645,72 @@ class Orchestrator:
     # -- Square-off & control ----------------------------------------------------------
 
     def square_off_all(self, reason: str = "square_off") -> None:
-        """Flatten every open position. Independent of strategy/feed health."""
+        """Flatten every open position. Independent of strategy/feed health.
+
+        Sources positions from the broker (the source of truth) rather than only the in-memory
+        tracker, so a flatten works even when the tracker is empty — e.g. after a process restart
+        (the tracker is never rehydrated) or for positions opened in a previous run. The in-memory
+        tracker is folded in as belt-and-braces for anything the broker did not report.
+        """
+        targets: dict[str, tuple[Instrument, int]] = {}  # trading_symbol -> (instrument, signed net)
+        for raw in self._fetch_broker_positions():
+            row = normalize_position_row(raw)
+            if row is None or row["net_qty"] == 0:
+                continue
+            targets[row["trading_symbol"]] = (self._instrument_from_position(row), row["net_qty"])
         for position in self._positions.open_positions():
-            token = position.instrument.instrument_token
-            ltp = self._ltp.get(token)
-            # close in the correct direction: SELL to close a long, BUY to close a short
+            sym = position.instrument.trading_symbol
+            if sym not in targets:
+                signed = position.quantity if position.side is Side.BUY else -position.quantity
+                targets[sym] = (position.instrument, signed)
+
+        count = 0
+        for instrument, net in targets.values():
+            token = instrument.instrument_token
+            ltp = self._ltp.get(token) if token else None
+            # close in the correct direction: SELL to close a long (net > 0), BUY to close a short
+            position_side = Side.BUY if net > 0 else Side.SELL
             exit_req = self._translator.build_exit(
-                position.instrument, position.quantity, ltp, position_side=position.side
+                instrument, abs(net), ltp, position_side=position_side
             )
-            self._exits.unregister(position.instrument.trading_symbol)
-            self._short_tokens.pop(token, None)
+            self._exits.unregister(instrument.trading_symbol)
+            if token:
+                self._short_tokens.pop(token, None)
             self._orders.submit(exit_req)
-        self._repo.record_audit("square_off", reason)
-        log.info("square_off_all", reason=reason)
+            count += 1
+        self._repo.record_audit("square_off", f"{reason} ({count} positions)")
+        log.info("square_off_all", reason=reason, positions=count)
+        if count == 0:
+            log.warning("square_off_all_empty", reason=reason)
+
+    def _fetch_broker_positions(self) -> list[dict]:
+        """Current broker positions (raw dicts). Falls back to the last persisted snapshot if the
+        live broker read fails, so a transient broker error still flattens off known state rather
+        than silently doing nothing."""
+        try:
+            return self._broker.positions()
+        except Exception:  # noqa: BLE001 - a broker read failure must not abort the flatten
+            log.exception("square_off_broker_read_failed")
+            try:
+                return self._repo.latest_broker_positions()
+            except Exception:  # noqa: BLE001
+                log.exception("square_off_persisted_positions_read_failed")
+                return []
+
+    def _instrument_from_position(self, row: dict) -> Instrument:
+        """Reconstruct a tradeable Instrument from a normalized broker position row. Only the
+        symbol and exchange segment are sent to the broker when placing; strike/expiry/lot_size ride
+        along on the model but are unused for a close, so they carry safe placeholders."""
+        return Instrument(
+            underlying=_coerce_enum(Underlying, row["underlying"], Underlying.NIFTY),
+            exchange_segment=_coerce_enum(ExchangeSegment, row["exchange_segment"], ExchangeSegment.NSE_FO),
+            trading_symbol=row["trading_symbol"],
+            instrument_token=row["instrument_token"],
+            expiry=date.today(),
+            strike=Decimal(0),
+            option_type=_coerce_enum(OptionType, row["option_type"], OptionType.CE),
+            lot_size=0,
+        )
 
     def process_control_commands(self) -> None:
         for cmd in self._repo.pop_pending_commands():
