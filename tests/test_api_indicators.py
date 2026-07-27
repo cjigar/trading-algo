@@ -1,8 +1,8 @@
 from datetime import datetime
-from decimal import Decimal
+
+from apps.api.app.schemas import indicator_panel_out
 
 from algo_trading.analytics.indicators import Cell, IndicatorPanel
-from apps.api.app.schemas import indicator_panel_out
 
 
 def test_indicator_panel_out_serializes():

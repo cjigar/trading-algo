@@ -199,7 +199,7 @@ def test_stream_payload_builder(repo):
     # one-shot fetch that then sits stale.
     assert set(payload) == {
         "state", "pnl", "positions", "orders", "broker_pnl",
-        "broker_positions", "broker_trades", "chain",
+        "broker_positions", "broker_trades", "chain", "indicators",
     }
     assert payload["state"]["algo_state"] == "HALTED"
     # chain payload carries per-strike trend fields identical in shape to /api/chain
