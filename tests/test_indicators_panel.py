@@ -51,3 +51,28 @@ def test_compute_panel_shape():
     assert set(panel.timeframes.keys()) == {5, 15}
     assert "cells" in panel.timeframes[5] and "composite" in panel.timeframes[5]
     assert panel.orb.label in (ind.BULLISH, ind.BEARISH, ind.NEUTRAL, ind.NA)
+
+
+def _c_day2(i, o, h, lo, c):
+    start = datetime(2025, 1, 16, 9, 15, tzinfo=IST) + timedelta(minutes=5 * i)
+    return Candle(symbol="NIFTY-IDX", start=start, end=start + timedelta(minutes=5),
+                  open=Decimal(o), high=Decimal(h), low=Decimal(lo), close=Decimal(c),
+                  volume=Decimal(1))
+
+
+def test_vwap_uses_only_latest_session():
+    # Day 1 all at 100, day 2 all at 200. Session VWAP must be 200 (latest day only),
+    # NOT a multi-day cumulative (~150).
+    day1 = [_c(i, 100, 100, 100, 100) for i in range(6)]
+    day2 = [_c_day2(i, 200, 200, 200, 200) for i in range(6)]
+    assert ind.vwap_last(day1 + day2) == Decimal(200)
+
+
+def test_orb_uses_only_latest_session():
+    # Day 1 opening range high 150/low 50; day 2 opening range high 110/low 90.
+    # ORB must reflect day 2 only, not the widest across both days.
+    day1 = [_c(i, 100, 150, 50, 100) for i in range(6)]
+    day2 = [_c_day2(i, 100, 110, 90, 100) for i in range(6)]
+    high, low = ind.orb_levels(day1 + day2, time(9, 15), 30, IST)
+    assert high == Decimal(110)
+    assert low == Decimal(90)

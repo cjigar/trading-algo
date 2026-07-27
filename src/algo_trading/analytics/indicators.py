@@ -21,6 +21,16 @@ BEARISH = "bearish"
 NEUTRAL = "neutral"
 NA = "na"
 
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def _latest_session_candles(candles: list[Candle], tz: ZoneInfo) -> list[Candle]:
+    """Candles belonging to the most recent trading day present (session-scoped indicators)."""
+    if not candles:
+        return []
+    latest_day = max(c.start.astimezone(tz).date() for c in candles)
+    return [c for c in candles if c.start.astimezone(tz).date() == latest_day]
+
 
 def ema_series(values: list[Decimal], period: int) -> list[Decimal]:
     """Full EMA series (seeded with the SMA of the first ``period`` values). Empty if too short."""
@@ -138,11 +148,12 @@ def supertrend_last(
     return st, direction
 
 
-def vwap_last(candles: list[Candle]) -> Decimal | None:
-    if not candles:
+def vwap_last(candles: list[Candle], tz: ZoneInfo = IST) -> Decimal | None:
+    session = _latest_session_candles(candles, tz)
+    if not session:
         return None
     vwap = SessionVWAP()
-    for c in candles:
+    for c in session:
         vwap.update(c)
     return vwap.value
 
@@ -214,18 +225,13 @@ def _f(v: Decimal | None) -> float | None:
 def orb_levels(
     candles: list[Candle], market_open: time, orb_minutes: int, tz: ZoneInfo
 ) -> tuple[Decimal, Decimal] | None:
-    """(high, low) of the opening range. None if no candle falls in the window yet."""
-    open_dt_by_day: dict = {}
-    window: list[Candle] = []
-    for c in candles:
-        local = c.start.astimezone(tz)
-        day = local.date()
-        if day not in open_dt_by_day:
-            open_dt_by_day[day] = datetime.combine(day, market_open, tzinfo=tz)
-        start_of_range = open_dt_by_day[day]
-        end_of_range = start_of_range + timedelta(minutes=orb_minutes)
-        if start_of_range <= local < end_of_range:
-            window.append(c)
+    """(high, low) of the LATEST trading day's opening range. None if no candle in that window."""
+    if not candles:
+        return None
+    latest_day = max(c.start.astimezone(tz).date() for c in candles)
+    start_of_range = datetime.combine(latest_day, market_open, tzinfo=tz)
+    end_of_range = start_of_range + timedelta(minutes=orb_minutes)
+    window = [c for c in candles if start_of_range <= c.start.astimezone(tz) < end_of_range]
     if not window:
         return None
     return max(c.high for c in window), min(c.low for c in window)
@@ -242,14 +248,14 @@ def orb_cell(or_high: Decimal | None, or_low: Decimal | None, price: Decimal | N
     return Cell(NEUTRAL, values)
 
 
-def compute_timeframe(candles: list[Candle], price: Decimal | None) -> dict[str, Cell]:
+def compute_timeframe(candles: list[Candle], price: Decimal | None, tz: ZoneInfo = IST) -> dict[str, Cell]:
     closes = [c.close for c in candles]
     px = price if price is not None else (closes[-1] if closes else None)
 
     e9, e21, e50 = ema_last(closes, 9), ema_last(closes, 21), ema_last(closes, 50)
     ema = Cell(ema_label(e9, e21, e50, px), {"ema9": _f(e9), "ema21": _f(e21), "ema50": _f(e50)})
 
-    vw = vwap_last(candles)
+    vw = vwap_last(candles, tz)
     vwap = Cell(vwap_label(px, vw), {"vwap": _f(vw)})
 
     r = rsi_last(closes, 14)
@@ -320,7 +326,7 @@ def compute_panel(
 
     timeframes: dict[int, dict] = {}
     for tf, candles in candles_by_tf.items():
-        cells = compute_timeframe(candles, price)
+        cells = compute_timeframe(candles, price, tz)
         directional = [cells["ema"], cells["vwap"], cells["rsi"], cells["macd"],
                        cells["supertrend"], orb]
         label, tally = composite_of(directional)
