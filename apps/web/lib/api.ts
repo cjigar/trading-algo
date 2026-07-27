@@ -137,8 +137,21 @@ export type Chain = {
   underlying: string | null; atm: number | null; ce_oi_total: number; pe_oi_total: number;
   selected_side: string; display_window: number; per_strike: ChainStrike[];
 };
+// One indicator's rendered state: a trend label plus named numeric values (null while warming up).
+export type TrendLabel = "bullish" | "bearish" | "neutral" | "na";
+export type IndicatorCell = { label: TrendLabel; values: Record<string, number | null> };
+export type TimeframeIndicators = {
+  cells: Record<string, IndicatorCell>;
+  composite: TrendLabel;
+  composite_tally: string;
+};
+export type IndicatorPanel = {
+  timeframes: Record<string, TimeframeIndicators>; // keyed by timeframe minutes, e.g. "5", "15"
+  orb: IndicatorCell;
+  as_of: string | null;
+};
 export type StreamPayload = {
   state: AlgoState; pnl: PnL; positions: Position[]; orders: Order[];
   broker_pnl: BrokerPnL; broker_positions: Record<string, unknown>[]; broker_trades: Trade[];
-  chain: Chain;
+  chain: Chain; indicators: IndicatorPanel;
 };
