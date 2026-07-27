@@ -99,12 +99,15 @@ export default function Dashboard() {
         <span className="mr-1 text-xs text-neutral-500">Auto 9:15–15:30 IST</span>
         <button onClick={() => control("stop")} className="rounded-md bg-red-800 px-3 py-2 text-sm hover:bg-red-700">⏹ Stop</button>
         <button onClick={() => control("flatten")} className="rounded-md bg-neutral-700 px-3 py-2 text-sm hover:bg-neutral-600">🧹 Flatten</button>
-        <span className="ml-auto text-xs text-neutral-500">{connected ? "● live" : "○ offline"}</span>
+        <div className="ml-auto flex items-center gap-2">
+          {pnl && <EngineFreshness engine={pnl.engine} />}
+          <span className="text-xs text-neutral-500">{connected ? "● live" : "○ offline"}</span>
+        </div>
       </div>
 
       <Tabs tabs={TABS} active={tab} onChange={setTab} />
 
-      {tab === "P&L" && pnl && (
+      {tab === "P&L" && (
         <div className="space-y-6">
           {brokerPnl && (
             <div className="space-y-2">
@@ -116,23 +119,6 @@ export default function Dashboard() {
               <BrokerPnLTable pnl={brokerPnl} />
             </div>
           )}
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-medium text-neutral-300">Algo session P&amp;L (this session&apos;s fills)</h2>
-              <EngineFreshness engine={pnl.engine} />
-            </div>
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-              <Metric label="Day P&L" value={<Signed value={pnl.day_pnl} />} />
-              <Metric label="Realized" value={<Signed value={pnl.total_realized} />} />
-              <Metric label="Unrealized (open)" value={<Signed value={pnl.total_unrealized} />} />
-            </div>
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-              <Metric label="Fills" value={pnl.trade_count} />
-              <Metric label="Open symbols" value={pnl.open_symbols} />
-              <Metric label="Buy / Sell value" value={`${pnl.total_buy_value.toLocaleString()} / ${pnl.total_sell_value.toLocaleString()}`} />
-            </div>
-            <DataTable rows={pnl.per_symbol as unknown as Record<string, unknown>[]} />
-          </div>
         </div>
       )}
       {tab === "Positions" && (
@@ -224,12 +210,6 @@ export default function Dashboard() {
       )}
     </main>
   );
-}
-
-// A rupee amount coloured by sign. Zero reads as neutral rather than "profit".
-function Signed({ value }: { value: number }) {
-  const tone = value > 0 ? "text-emerald-400" : value < 0 ? "text-red-400" : "text-neutral-200";
-  return <span className={tone}>₹{value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>;
 }
 
 // How recently the trading loop published its own P&L. The dashboard computes P&L independently
