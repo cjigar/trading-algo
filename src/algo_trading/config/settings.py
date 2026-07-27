@@ -76,6 +76,10 @@ class Settings(BaseSettings):
 
     # --- Strategy parameters (PLACEHOLDERS — confirm before live) ---
     candle_timeframe_minutes: int = 5
+    indicators_enabled: bool = True
+    indicator_timeframes: Annotated[list[int], NoDecode] = Field(default_factory=lambda: [5, 15])
+    orb_minutes: int = 30
+    nifty_candle_retention_days: int = 7
     strike_selection: StrikeSelection = StrikeSelection.ATM
     vwap_breakout_buffer: Decimal = Decimal("0")
     target_points: Decimal = Decimal("30")
@@ -219,6 +223,13 @@ class Settings(BaseSettings):
     @field_validator("oi_trend_windows", mode="before")
     @classmethod
     def _parse_trend_windows(cls, v: object) -> object:
+        if not isinstance(v, str):
+            return v
+        return [int(item.strip()) for item in v.split(",") if item.strip()]
+
+    @field_validator("indicator_timeframes", mode="before")
+    @classmethod
+    def _parse_indicator_timeframes(cls, v: object) -> object:
         if not isinstance(v, str):
             return v
         return [int(item.strip()) for item in v.split(",") if item.strip()]
