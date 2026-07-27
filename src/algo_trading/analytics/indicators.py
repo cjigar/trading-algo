@@ -8,7 +8,10 @@ existing incremental classes in strategy/indicators.py.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime, time, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from algo_trading.domain.models import Candle
 from algo_trading.strategy.indicators import ATR, SessionVWAP
@@ -194,3 +197,132 @@ def vwap_label(price, vwap) -> str:
     if price < vwap:
         return BEARISH
     return NEUTRAL
+
+
+@dataclass(frozen=True)
+class Cell:
+    """One indicator's rendered state: a trend label plus named numeric values (JSON-ready floats)."""
+
+    label: str
+    values: dict[str, float]
+
+
+def _f(v: Decimal | None) -> float | None:
+    return float(v) if v is not None else None
+
+
+def orb_levels(
+    candles: list[Candle], market_open: time, orb_minutes: int, tz: ZoneInfo
+) -> tuple[Decimal, Decimal] | None:
+    """(high, low) of the opening range. None if no candle falls in the window yet."""
+    open_dt_by_day: dict = {}
+    window: list[Candle] = []
+    for c in candles:
+        local = c.start.astimezone(tz)
+        day = local.date()
+        if day not in open_dt_by_day:
+            open_dt_by_day[day] = datetime.combine(day, market_open, tzinfo=tz)
+        start_of_range = open_dt_by_day[day]
+        end_of_range = start_of_range + timedelta(minutes=orb_minutes)
+        if start_of_range <= local < end_of_range:
+            window.append(c)
+    if not window:
+        return None
+    return max(c.high for c in window), min(c.low for c in window)
+
+
+def orb_cell(or_high: Decimal | None, or_low: Decimal | None, price: Decimal | None) -> Cell:
+    values = {"or_high": _f(or_high), "or_low": _f(or_low), "price": _f(price)}
+    if or_high is None or or_low is None or price is None:
+        return Cell(NA, values)
+    if price > or_high:
+        return Cell(BULLISH, values)
+    if price < or_low:
+        return Cell(BEARISH, values)
+    return Cell(NEUTRAL, values)
+
+
+def compute_timeframe(candles: list[Candle], price: Decimal | None) -> dict[str, Cell]:
+    closes = [c.close for c in candles]
+    px = price if price is not None else (closes[-1] if closes else None)
+
+    e9, e21, e50 = ema_last(closes, 9), ema_last(closes, 21), ema_last(closes, 50)
+    ema = Cell(ema_label(e9, e21, e50, px), {"ema9": _f(e9), "ema21": _f(e21), "ema50": _f(e50)})
+
+    vw = vwap_last(candles)
+    vwap = Cell(vwap_label(px, vw), {"vwap": _f(vw)})
+
+    r = rsi_last(closes, 14)
+    rsi = Cell(rsi_label(r), {"rsi": _f(r)})
+
+    m = macd_last(closes)
+    if m is None:
+        macd = Cell(NA, {"macd": None, "signal": None, "hist": None})
+    else:
+        macd = Cell(macd_label(*m), {"macd": _f(m[0]), "signal": _f(m[1]), "hist": _f(m[2])})
+
+    b = bollinger_last(closes)
+    if b is None or px is None:
+        bollinger = Cell(NA, {"upper": None, "mid": None, "lower": None})
+    else:
+        upper, mid, lower = b
+        label = BULLISH if px > upper else (BEARISH if px < lower else NEUTRAL)
+        bollinger = Cell(label, {"upper": _f(upper), "mid": _f(mid), "lower": _f(lower),
+                                 "bandwidth": _f(upper - lower)})
+
+    a = atr_last(candles, 14)
+    atr = Cell(NEUTRAL if a is not None else NA,
+               {"atr": _f(a), "atr_pct": _f((a / px * Decimal(100)) if (a is not None and px) else None)})
+
+    st = supertrend_last(candles)
+    if st is None:
+        supertrend = Cell(NA, {"line": None})
+    else:
+        line, direction = st
+        supertrend = Cell(supertrend_label(px, line, direction), {"line": _f(line)})
+
+    return {"ema": ema, "vwap": vwap, "rsi": rsi, "macd": macd,
+            "bollinger": bollinger, "atr": atr, "supertrend": supertrend}
+
+
+def composite_of(cells: list[Cell]) -> tuple[str, str]:
+    bull = sum(1 for c in cells if c.label == BULLISH)
+    bear = sum(1 for c in cells if c.label == BEARISH)
+    tally = f"{bull} bull / {bear} bear"
+    if bull > bear:
+        return BULLISH, tally
+    if bear > bull:
+        return BEARISH, tally
+    return NEUTRAL, tally
+
+
+@dataclass(frozen=True)
+class IndicatorPanel:
+    timeframes: dict[int, dict]
+    orb: Cell
+    as_of: datetime | None
+
+
+def compute_panel(
+    candles_by_tf: dict[int, list[Candle]],
+    price: Decimal | None,
+    market_open: time,
+    orb_minutes: int,
+    tz: ZoneInfo,
+    as_of: datetime | None = None,
+) -> IndicatorPanel:
+    # ORB is a session-level construct: compute it once from the finest timeframe available.
+    orb = Cell(NA, {"or_high": None, "or_low": None, "price": _f(price)})
+    if candles_by_tf:
+        finest = candles_by_tf[min(candles_by_tf)]
+        levels = orb_levels(finest, market_open, orb_minutes, tz)
+        orb = orb_cell(levels[0], levels[1], price) if levels else orb_cell(None, None, price)
+
+    timeframes: dict[int, dict] = {}
+    for tf, candles in candles_by_tf.items():
+        cells = compute_timeframe(candles, price)
+        directional = [cells["ema"], cells["vwap"], cells["rsi"], cells["macd"],
+                       cells["supertrend"], orb]
+        label, tally = composite_of(directional)
+        timeframes[tf] = {"cells": cells, "composite": label, "composite_tally": tally}
+    return IndicatorPanel(timeframes=timeframes, orb=orb, as_of=as_of)
