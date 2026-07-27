@@ -6,6 +6,7 @@ import { AccountSummary, Banner, DataTable, Metric, SpotTicker, Tabs } from "@/c
 import { api, clearToken, type BrokerPnL, type Chain, type EnginePnL, type Greeks, type OiTrends } from "@/lib/api";
 import { fmtOi } from "@/lib/format";
 import { useStream } from "@/lib/useStream";
+import { IndicatorPanelView } from "../../components/IndicatorPanel";
 
 const TABS = ["P&L", "Positions", "Orders", "Trades", "Option Chain", "Config"];
 
@@ -109,6 +110,7 @@ export default function Dashboard() {
 
       {tab === "P&L" && (
         <div className="space-y-6">
+          {data?.indicators && <IndicatorPanelView panel={data.indicators} />}
           {brokerPnl && (
             <div className="space-y-2">
               <h2 className="text-sm font-medium text-neutral-300">Broker account P&amp;L (live M2M)</h2>
