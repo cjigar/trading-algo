@@ -1,7 +1,7 @@
 # Nifty indicator panel (display-only)
 
 **Date:** 2026-07-27
-**Status:** Approved — ready for implementation plan
+**Status:** Implemented — 2026-07-27
 
 ## Goal
 
