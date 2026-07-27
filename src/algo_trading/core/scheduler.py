@@ -48,6 +48,22 @@ def in_trading_window(now: datetime, settings: Settings) -> bool:
     return settings.market_open <= local.time() < settings.squareoff_time
 
 
+def in_feed_window(now: datetime, settings: Settings) -> bool:
+    """True while the quote feed should keep itself reconnected: a trading day, from the pre-market
+    login through market close.
+
+    Wider than :func:`in_trading_window` (pre-open warmup so the feed is live for the 09:15 open,
+    and through the full close). Outside it, the feed is left dead rather than chased with
+    reconnects — no trading happens off-hours, and each trading day starts fresh via the pre-market
+    re-login, so an idle socket the broker drops must not trigger leaky reconnect attempts. Gating
+    on this is what stops the weekend thread/FD accumulation that wedged the loop.
+    """
+    local = now.astimezone(IST)
+    if not is_trading_day(local.date(), settings):
+        return False
+    return settings.premarket_login_time <= local.time() <= settings.market_close
+
+
 def should_hard_recover(
     stale_since: float | None, now: float, threshold_seconds: float
 ) -> bool:

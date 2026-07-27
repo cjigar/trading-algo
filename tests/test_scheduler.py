@@ -9,6 +9,7 @@ import pytest
 
 from algo_trading.config.settings import get_settings
 from algo_trading.core.scheduler import (
+    in_feed_window,
     in_trading_window,
     is_trading_day,
     should_hard_recover,
@@ -77,6 +78,36 @@ def test_in_trading_window_accepts_utc_input(settings):
     # 05:45 UTC == 11:15 IST on a Thursday -> inside the window.
     now = datetime(2026, 7, 23, 5, 45, tzinfo=ZoneInfo("UTC"))
     assert in_trading_window(now, settings) is True
+
+
+# --- in_feed_window (wider than the trading window: pre-open warmup through full close) ---
+
+@pytest.mark.parametrize(
+    "hh, mm, expected",
+    [
+        (8, 59, False),   # before pre-market login
+        (9, 0, True),     # pre-market login — feed comes alive for the open
+        (9, 15, True),    # market open
+        (15, 15, True),   # square-off (still inside the feed window, unlike the trading window)
+        (15, 30, True),   # market close — feed stays reconnectable through the full close
+        (15, 31, False),  # after close — feed left dead
+        (2, 0, False),    # overnight
+    ],
+)
+def test_in_feed_window_times(settings, hh, mm, expected):
+    now = _ist(2026, 7, 23, hh, mm)  # Thursday
+    assert in_feed_window(now, settings) is expected
+
+
+def test_in_feed_window_false_all_weekend(settings):
+    # The failure mode this fixes: no reconnects Sat/Sun so nothing leaks between Fri and Mon.
+    assert in_feed_window(_ist(2026, 7, 25, 11, 0), settings) is False  # Saturday
+    assert in_feed_window(_ist(2026, 7, 26, 11, 0), settings) is False  # Sunday
+
+
+def test_in_feed_window_false_on_holiday(settings):
+    settings.market_holidays = ["2026-07-23"]
+    assert in_feed_window(_ist(2026, 7, 23, 11, 0), settings) is False
 
 
 # --- MarketScheduler job registration -------------------------------------------------

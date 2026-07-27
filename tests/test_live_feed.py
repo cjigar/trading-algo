@@ -280,6 +280,43 @@ def test_abrupt_ws_loss_bounds_total_subscribe_attempts():
     )
 
 
+def test_reconnect_skipped_off_hours_makes_no_subscribe_attempt():
+    """Off-hours, a dropped socket must NOT be reconnected — each attempt leaks a socket+thread on
+    the SDK, and over a weekend that exhausts threads/FDs. The gate is what stops it."""
+    from algo_trading.broker.market_data import FeedHandler
+
+    calls = {"n": 0}
+
+    class _Neo:
+        def subscribe(self, **_k):
+            calls["n"] += 1
+
+    fh = FeedHandler(_settings(), on_tick=lambda t: None, reconnect_allowed=lambda: False)
+    fh._neo = _Neo()
+    fh._subscriptions = {"256265": {"instrument_token": "256265", "exchange_segment": "nse_cm"}}
+
+    assert fh.reconnect() is False
+    assert calls["n"] == 0  # no leaky resubscribe off-hours
+
+
+def test_reconnect_proceeds_in_hours():
+    """With the gate open, reconnect resubscribes as normal."""
+    from algo_trading.broker.market_data import FeedHandler
+
+    calls = {"n": 0}
+
+    class _Neo:
+        def subscribe(self, **_k):
+            calls["n"] += 1
+
+    fh = FeedHandler(_settings(), on_tick=lambda t: None, reconnect_allowed=lambda: True)
+    fh._neo = _Neo()
+    fh._subscriptions = {"256265": {"instrument_token": "256265", "exchange_segment": "nse_cm"}}
+
+    assert fh.reconnect() is True
+    assert calls["n"] == 1
+
+
 # -- Stale-feed watchdog ---------------------------------------------------------------
 #
 # A subscription issued before the SDK's websocket finishes connecting is silently dropped:

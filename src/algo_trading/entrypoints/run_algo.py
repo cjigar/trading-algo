@@ -21,6 +21,7 @@ from algo_trading.core.orchestrator import LiveModeNotArmedError, Orchestrator
 from algo_trading.core.scheduler import (
     IST,
     MarketScheduler,
+    in_feed_window,
     in_trading_window,
     is_trading_day,
     should_hard_recover,
@@ -183,8 +184,11 @@ def main() -> None:
                 log.exception("chain_purge_failed")
             try:
                 # Reconnects a feed that went quiet — including a subscription the SDK dropped
-                # because it was issued before the websocket finished connecting.
-                orch.recover_stale_feed()
+                # because it was issued before the websocket finished connecting. Gated to the feed
+                # window: off-hours the reconnect would no-op anyway (see FeedHandler.reconnect), so
+                # skipping the call avoids pointless stale-reconnect log noise between sessions.
+                if in_feed_window(datetime.now(UTC), settings):
+                    orch.recover_stale_feed()
                 # Hard recovery: if the feed stays stale through the trading window despite those
                 # resubscribes, the broker session is dead (e.g. token expired) — re-exec for a
                 # fresh login. Gated to the trading window so a quiet pre/post-market never trips

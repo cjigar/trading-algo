@@ -73,11 +73,17 @@ class FeedHandler:
         *,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        reconnect_allowed: Callable[[], bool] = lambda: True,
     ) -> None:
         self._settings = settings
         self._on_tick = on_tick
         self._clock = clock
         self._sleep = sleep
+        # Policy predicate (injected): may we reconnect right now? Gated to market hours by the
+        # coordinator so an idle socket dropped off-hours is not chased with leaky reconnects
+        # (each attempt orphans a socket+thread in the SDK). Default True keeps tests/behaviour
+        # unchanged where no policy is supplied.
+        self._reconnect_allowed = reconnect_allowed
         self._neo: Any | None = None
         self._subscriptions: dict[str, dict] = {}  # token -> {instrument_token, exchange_segment}
         self._last_tick_at: float | None = None
@@ -155,6 +161,13 @@ class FeedHandler:
         1024/1024 FDs, which wedges the feed permanently while the process still looks
         healthy to Docker.
         """
+        # Off-hours: leave a dropped socket dead rather than reconnecting. The broker closes idle
+        # sockets after hours; chasing them leaks a socket+thread per attempt (subscribe() stands up
+        # a fresh websocket without closing the old), which over a weekend exhausts threads/FDs and
+        # wedges the loop. The next trading day starts fresh via the pre-market re-login.
+        if not self._reconnect_allowed():
+            log.info("quote_ws_reconnect_skipped_off_hours")
+            return False
         with self._lock:
             if self._reconnecting:
                 # A reconnect is already walking its attempts; this call arrived via an
