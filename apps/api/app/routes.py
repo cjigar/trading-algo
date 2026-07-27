@@ -18,6 +18,7 @@ from app.deps import get_bridge, get_engine_settings
 from app.schemas import (
     BrokerPnLOut,
     ChainOut,
+    IndicatorPanelOut,
     OrderOut,
     PnLOut,
     PositionOut,
@@ -26,6 +27,7 @@ from app.schemas import (
     broker_pnl_out,
     broker_trades_out,
     chain_out,
+    indicator_panel_out,
     orders_out,
     pnl_out,
     positions_out,
@@ -69,6 +71,11 @@ def get_state(settings: Settings = Depends(get_engine_settings), bridge: StateBr
 @api.get("/pnl", response_model=PnLOut)
 def get_pnl(bridge: StateBridge = Depends(get_bridge)):
     return pnl_out(bridge.read_state())
+
+
+@api.get("/indicators", response_model=IndicatorPanelOut)
+def get_indicators(bridge: StateBridge = Depends(get_bridge)):
+    return indicator_panel_out(bridge.indicator_panel())
 
 
 @api.get("/positions", response_model=list[PositionOut])
@@ -199,6 +206,7 @@ def build_stream_payload() -> dict[str, Any]:
         "broker_positions": broker_positions,
         "broker_trades": [t.model_dump() for t in broker_trades_out(bridge.broker_trades())],
         "chain": _chain_out_with_trends(bridge, settings, u).model_dump(),
+        "indicators": indicator_panel_out(bridge.indicator_panel()).model_dump(),
     }
 
 

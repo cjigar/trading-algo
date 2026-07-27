@@ -56,6 +56,25 @@ class EnginePnLOut(BaseModel):
     age_seconds: float
 
 
+class IndicatorCellOut(BaseModel):
+    """One indicator's rendered state: trend label + named numeric values (null while warming up)."""
+
+    label: str
+    values: dict[str, float | None]
+
+
+class TimeframeIndicatorsOut(BaseModel):
+    cells: dict[str, IndicatorCellOut]
+    composite: str
+    composite_tally: str
+
+
+class IndicatorPanelOut(BaseModel):
+    timeframes: dict[str, TimeframeIndicatorsOut]  # keyed by timeframe minutes as a string
+    orb: IndicatorCellOut
+    as_of: str | None = None
+
+
 class PnLOut(BaseModel):
     total_realized: float
     total_unrealized: float  # open positions marked at the loop's published prices
@@ -184,6 +203,25 @@ def state_out(settings: Settings, s: DashboardState) -> StateOut:
         active_underlying=active.value if active else None,
         oi_underlyings=[u.value for u in settings.oi_underlyings],
         spots=[_spot_out(row, max_age, s.prev_index_closes.get(row.underlying)) for row in s.spots],
+    )
+
+
+def _cell_out(cell) -> IndicatorCellOut:
+    return IndicatorCellOut(label=cell.label, values=cell.values)
+
+
+def indicator_panel_out(panel) -> IndicatorPanelOut:
+    return IndicatorPanelOut(
+        timeframes={
+            str(tf): TimeframeIndicatorsOut(
+                cells={name: _cell_out(c) for name, c in tf_data["cells"].items()},
+                composite=tf_data["composite"],
+                composite_tally=tf_data["composite_tally"],
+            )
+            for tf, tf_data in panel.timeframes.items()
+        },
+        orb=_cell_out(panel.orb),
+        as_of=panel.as_of.isoformat() if panel.as_of else None,
     )
 
 
