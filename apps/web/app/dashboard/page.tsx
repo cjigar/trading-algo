@@ -106,11 +106,13 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Nifty indicators panel: shown above the tabs so it stays visible on every tab. */}
+      {data?.indicators && <IndicatorPanelView panel={data.indicators} />}
+
       <Tabs tabs={TABS} active={tab} onChange={setTab} />
 
       {tab === "P&L" && (
         <div className="space-y-6">
-          {data?.indicators && <IndicatorPanelView panel={data.indicators} />}
           {brokerPnl && (
             <div className="space-y-2">
               <h2 className="text-sm font-medium text-neutral-300">Broker account P&amp;L (live M2M)</h2>
