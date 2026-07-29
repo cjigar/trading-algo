@@ -246,6 +246,46 @@ def test_anchor_query_survives_chunk_compression(fresh_db):
     engine.dispose()
 
 
+def test_purge_deletes_expired_rows_from_a_compressed_chunk(fresh_db):
+    """Retention purge must delete expired snapshots even after their chunk is compressed — the
+    DELETE has to decompress the chunk to do it. This exercises the delete-on-compressed path the
+    daily purge runs against. (In production that decompression can exceed TimescaleDB's
+    max_tuples_decompressed_per_dml_transaction cap once a backlog builds — 311k tuples vs the
+    100k default — which purge_expired_chain_snapshots handles by lifting the cap for its own
+    transaction via SET LOCAL. That cap is not enforced at the row counts a fast test can create,
+    so this test validates the functional path rather than the cap override itself.)"""
+    from datetime import date
+
+    from sqlmodel import Session, select
+
+    from algo_trading.persistence.db import OptionChainSnapshotRow
+
+    engine = create_engine_from_url(fresh_db, settings=SchemaTuning())
+    repo = Repository(engine)
+    ts = datetime(2025, 1, 20, 10, 0)
+    repo.write_chain_snapshots([_snap("EXP", 1000, ts) | {"expiry": date(2025, 1, 21)}])   # expired
+    repo.write_chain_snapshots([_snap("LIVE", 2000, ts) | {"expiry": date(2025, 1, 28)}])  # live
+
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        chunks = conn.execute(text(f"SELECT show_chunks('{CHAIN_TABLE}')")).scalars().all()
+        assert chunks
+        for chunk in chunks:
+            conn.execute(text("SELECT compress_chunk(:c, if_not_compressed => true)"), {"c": chunk})
+        compressed = conn.execute(
+            text(
+                "SELECT count(*) FROM timescaledb_information.chunks "
+                f"WHERE hypertable_name = '{CHAIN_TABLE}' AND is_compressed"
+            )
+        ).scalar()
+    assert compressed == 1  # the expired row now lives inside a compressed chunk
+
+    assert repo.purge_expired_chain_snapshots(today=date(2025, 1, 22)) == 1
+    with Session(engine) as s:
+        remaining = {r.instrument_token for r in s.exec(select(OptionChainSnapshotRow)).all()}
+    assert remaining == {"LIVE"}  # expired purged from the compressed chunk; live kept
+    engine.dispose()
+
+
 def test_aggregate_and_raw_paths_agree(fresh_db):
     """The aggregate serves closed buckets and the raw table the tail; both must produce the
     anchor the raw data alone implies."""

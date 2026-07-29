@@ -374,6 +374,13 @@ class Repository:
         Returns the number of rows deleted."""
         cutoff = today or date.today()
         with Session(self._engine) as session:
+            # option_chain_snapshots is a compressed hypertable, so deleting expired rows must
+            # decompress the chunks they live in. TimescaleDB caps that per transaction at
+            # max_tuples_decompressed_per_dml_transaction (default 100k) and aborts the DELETE
+            # once exceeded — which silently broke retention the moment a backlog built past the
+            # cap. Lift the cap for this one transaction only (SET LOCAL, scoped to this txn);
+            # the purge runs once per IST day off the hot path, so a larger decompress is fine.
+            session.execute(text("SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0"))
             result = session.exec(
                 delete(OptionChainSnapshotRow).where(
                     col(OptionChainSnapshotRow.expiry).is_not(None),
