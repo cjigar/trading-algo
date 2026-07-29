@@ -37,6 +37,14 @@ services:
         INSTALL_BROKER: ${INSTALL_BROKER:-0}
     image: algo-trading:latest
     restart: unless-stopped
+    # Raise the open-files limit well above the 1024 default: the live Kotak websocket feed opens
+    # many concurrent sockets, and a mid-session reconnect burst can otherwise exhaust the fd table
+    # ("Too many open files"), throwing the feed into a runaway reconnect storm. 65536 gives ample
+    # headroom for the ~170 subscriptions plus reconnect churn.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     depends_on:
       db:
         condition: service_healthy
