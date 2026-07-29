@@ -1,5 +1,6 @@
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from freezegun import freeze_time
 
@@ -41,3 +42,24 @@ def test_timeframe_isolation(engine):
     repo.upsert_nifty_candle("NIFTY", 15, _candle(0), trading_day=date(2025, 1, 15))
     assert len(repo.nifty_candles("NIFTY", 5, lookback_days=5)) == 1
     assert len(repo.nifty_candles("NIFTY", 15, lookback_days=5)) == 1
+
+
+@freeze_time("2025-01-15")
+def test_candle_start_roundtrips_as_utc_instant(engine):
+    # Production candles from CandleBuilder carry IST-aware boundaries. The round-trip must preserve
+    # the instant and store naive UTC, so the read-side ORB/session bucketing and the wall-clock
+    # retention cutoff are correct regardless of the host/container/DB timezone (finding #3).
+    ist = ZoneInfo("Asia/Kolkata")
+    start = datetime(2025, 1, 15, 9, 15, tzinfo=ist)  # 09:15 IST market open
+    candle = Candle(symbol="NIFTY-IDX", start=start, end=start + timedelta(minutes=5),
+                    open=Decimal(100), high=Decimal(101), low=Decimal(99),
+                    close=Decimal(100), volume=Decimal(1))
+    repo = Repository(engine)
+    repo.upsert_nifty_candle("NIFTY", 5, candle, trading_day=date(2025, 1, 15))
+
+    got = repo.nifty_candles("NIFTY", 5, lookback_days=5)
+    assert len(got) == 1
+    # Same instant, expressed back in IST, regardless of the process/DB timezone.
+    assert got[0].start.astimezone(ist) == start
+    # And it is stored as UTC wall-clock: 09:15 IST == 03:45 UTC.
+    assert got[0].start.astimezone(UTC).replace(tzinfo=None) == datetime(2025, 1, 15, 3, 45)

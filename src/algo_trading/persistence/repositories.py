@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import Engine, case, delete, func, text
@@ -147,11 +147,28 @@ def _instrument_from_row(row: OrderRow | TradeRow) -> Instrument:
     )
 
 
+def _to_naive_utc(dt: datetime) -> datetime:
+    """Normalize a datetime to naive UTC for storage, matching the schema's naive-UTC convention.
+    A tz-aware value (e.g. the IST-aware candle boundaries from CandleBuilder) is converted to UTC
+    and stripped; a naive value is assumed to already be UTC. This makes the stored wall-clock — and
+    therefore the retention/lookback comparisons against ``datetime.utcnow()`` and the read-side
+    IST session/ORB bucketing — deterministic regardless of the host/container/DB timezone."""
+    if dt.tzinfo is not None:
+        return dt.astimezone(UTC).replace(tzinfo=None)
+    return dt
+
+
+def _as_utc_aware(dt: datetime) -> datetime:
+    """Reconstruct a stored naive-UTC datetime as tz-aware UTC (inverse of :func:`_to_naive_utc`),
+    so the read-side can ``.astimezone(IST)`` correctly no matter what the process timezone is."""
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
+
+
 def _candle_from_row(row: NiftyCandleRow) -> Candle:
     return Candle(
         symbol=f"{row.underlying}-IDX",
-        start=row.start,
-        end=row.end,
+        start=_as_utc_aware(row.start),
+        end=_as_utc_aware(row.end),
         open=Decimal(row.open),
         high=Decimal(row.high),
         low=Decimal(row.low),
@@ -762,7 +779,7 @@ class Repository:
         day = _today_str(trading_day)
         stmt = pg_insert(NiftyCandleRow).values(
             trading_day=day, underlying=str(underlying), timeframe_minutes=int(timeframe_minutes),
-            start=candle.start, end=candle.end,
+            start=_to_naive_utc(candle.start), end=_to_naive_utc(candle.end),
             open=str(candle.open), high=str(candle.high), low=str(candle.low),
             close=str(candle.close), volume=str(candle.volume),
         ).on_conflict_do_nothing(index_elements=["underlying", "timeframe_minutes", "start"])
