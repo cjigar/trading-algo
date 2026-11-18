@@ -148,3 +148,77 @@ def test_kotak_client_requires_auth():
     client = KotakClient(get_settings())
     with pytest.raises(AuthError):
         client.positions()
+
+
+# -- REST quotes (LTP source while the quote websocket is decommissioned) ---------------
+
+
+class FakeQuotesNeo:
+    """Minimal NeoAPI stand-in that records quotes() calls and replays a canned response."""
+
+    def __init__(self, rows: list[dict] | None = None) -> None:
+        self.rows = rows if rows is not None else []
+        self.calls: list[dict] = []
+
+    def quotes(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.rows
+
+
+def _kotak_with_quotes(rows):
+    neo = FakeQuotesNeo(rows)
+    return KotakClient(get_settings(), neo_client=neo), neo
+
+
+def test_quotes_maps_token_to_ltp():
+    client, _ = _kotak_with_quotes([
+        {"exchange_token": "835470", "ltp": "150.2500"},
+        {"exchange_token": "999", "ltp": "12.0000"},
+    ])
+    assert client.quotes([("835470", "bse_fo"), ("999", "nse_cm")]) == {
+        "835470": Decimal("150.25"),
+        "999": Decimal("12"),
+    }
+
+
+def test_quotes_omits_unusable_prices():
+    """A zero/blank/garbage LTP must read as 'no quote'.
+
+    Marking an open short at 0 would display a enormous fabricated profit, so an unusable
+    price must leave the token absent (-> mtm_pending) rather than price it at zero.
+    """
+    client, _ = _kotak_with_quotes([
+        {"exchange_token": "A", "ltp": "0"},
+        {"exchange_token": "B", "ltp": ""},
+        {"exchange_token": "C", "ltp": "n/a"},
+        {"exchange_token": "D", "ltp": "7.5"},
+    ])
+    assert client.quotes([(t, "bse_fo") for t in "ABCD"]) == {"D": Decimal("7.5")}
+
+
+def test_quotes_tolerates_missing_tokens_in_response():
+    """A partial response is normal; unmatched tokens are simply absent."""
+    client, _ = _kotak_with_quotes([{"exchange_token": "A", "ltp": "5"}])
+    assert client.quotes([("A", "bse_fo"), ("B", "bse_fo")]) == {"A": Decimal("5")}
+
+
+def test_quotes_sends_one_batched_call_with_segment_pairs():
+    client, neo = _kotak_with_quotes([])
+    client.quotes([("A", "bse_fo"), ("B", "nse_cm")])
+    assert len(neo.calls) == 1
+    assert neo.calls[0]["instrument_tokens"] == [
+        {"instrument_token": "A", "exchange_segment": "bse_fo"},
+        {"instrument_token": "B", "exchange_segment": "nse_cm"},
+    ]
+
+
+def test_quotes_empty_input_makes_no_sdk_call():
+    client, neo = _kotak_with_quotes([])
+    assert client.quotes([]) == {}
+    assert neo.calls == []
+
+
+def test_paper_broker_quotes_is_empty():
+    from algo_trading.execution.paper_broker import PaperBroker
+
+    assert PaperBroker().quotes([("A", "bse_fo")]) == {}

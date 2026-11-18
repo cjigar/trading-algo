@@ -6,6 +6,7 @@ execution layer is broker-agnostic. Methods return normalized domain objects / p
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Protocol, runtime_checkable
 
 from algo_trading.domain.models import OrderRequest
@@ -42,6 +43,14 @@ class BrokerClient(Protocol):
     def cancel_order(self, broker_order_id: str) -> None: ...
 
     def positions(self) -> list[dict]: ...
+
+    def quotes(self, tokens: list[tuple[str, str]]) -> dict[str, Decimal]:
+        """Last traded price per instrument token, for ``(token, exchange_segment)`` pairs.
+
+        Tokens whose price is missing or unusable are OMITTED rather than defaulted, so a
+        caller marks a position only at a price the broker actually returned.
+        """
+        ...
 
     def limits(self) -> dict: ...
 

@@ -16,6 +16,7 @@ live response shape differs.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -106,6 +107,35 @@ class KotakClient:
 
     def trade_report(self) -> list[dict]:
         return self._as_list(self._call("trade_report"))
+
+    def quotes(self, tokens: list[tuple[str, str]]) -> dict[str, Decimal]:
+        """Batched REST LTP lookup — one call for every token.
+
+        This is the account's price source while the legacy quote websocket
+        (``wss://mlhsm.kotaksecurities.com``) is decommissioned; it is a plain REST GET and is
+        unrelated to the feed. A price that is absent, non-numeric or <= 0 is dropped, never
+        coerced to zero: marking an open short at 0 would render a fabricated profit.
+        """
+        if not tokens:
+            return {}
+        payload = [
+            {"instrument_token": tok, "exchange_segment": seg} for tok, seg in tokens
+        ]
+        rows = self._as_list(
+            self._call("quotes", instrument_tokens=payload, quote_type="ltp")
+        )
+        out: dict[str, Decimal] = {}
+        for row in rows:
+            token = str(row.get("exchange_token") or "")
+            if not token:
+                continue
+            try:
+                ltp = Decimal(str(row.get("ltp")))
+            except (ArithmeticError, ValueError, TypeError):
+                continue
+            if ltp > 0:
+                out[token] = ltp
+        return out
 
     # -- Param conversion --------------------------------------------------------------
 

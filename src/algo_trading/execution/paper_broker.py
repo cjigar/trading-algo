@@ -91,3 +91,7 @@ class PaperBroker:
         )
         signed = request.quantity if request.side is Side.BUY else -request.quantity
         pos["netQty"] += signed
+
+    def quotes(self, tokens: list[tuple[str, str]]) -> dict[str, Decimal]:
+        """Paper mode holds no broker session, so it never has a live price."""
+        return {}
