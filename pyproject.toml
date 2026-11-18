@@ -37,10 +37,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-broker = [
-    # Convenience extra: `pip install -e ".[broker]"`
-    "neo_api_client @ git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.2",
-]
+# NOTE: there is deliberately no `broker` extra any more. It pointed at
+#   git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.2
+# which GitHub blocked on 2026-11-05 ("Repository access blocked"), and the SDK has never been
+# published to any package index. Install the SDK from the vendored wheel instead:
+#   make install-broker        (or build the image with INSTALL_BROKER=1)
+# See vendor/README.md for provenance.
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",

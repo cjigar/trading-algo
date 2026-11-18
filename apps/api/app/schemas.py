@@ -287,13 +287,14 @@ class BrokerPositionPnLOut(BaseModel):
     ltp: float | None = None  # price the open net qty is marked at (null if unpriced)
     mtm_pending: bool = False  # open position awaiting a live quote
     vwap: float | None = None  # session VWAP for the position's option (null if unavailable)
+    product: str = ""  # Kotak product code (MIS/NRML)
 
 
 class BrokerPnLOut(BaseModel):
     total_realized: float  # realized on matched (squared) qty
     total_pnl: float  # account live M2M (realized + unrealized) — matches the Kotak app
     total_unrealized: float  # the marked-to-market part: total_pnl - total_realized
-    net_traded_value: float  # sum(sellAmt) - sum(buyAmt) across all positions; positive = net sold
+    net_traded_value: float  # sum(buyAmt) - sum(sellAmt); positive = net bought, negative = premium collected
     open_count: int
     mtm_pending_count: int  # open positions still awaiting a live quote
     per_position: list[BrokerPositionPnLOut]
@@ -308,6 +309,7 @@ def broker_pnl_out(rows: list[dict], quotes: dict[str, Decimal] | None = None,
         net_traded_value=float(s.net_traded_value),
         open_count=s.open_count, mtm_pending_count=s.mtm_pending_count,
         per_position=[BrokerPositionPnLOut(
+            product=p.product,
             symbol=p.symbol, net_qty=p.net_qty, buy_qty=p.buy_qty, sell_qty=p.sell_qty,
             avg_buy=float(p.avg_buy), avg_sell=float(p.avg_sell),
             realized_pnl=float(p.realized_pnl), is_open=p.is_open,

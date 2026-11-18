@@ -102,7 +102,7 @@ export type PnL = {
   engine: EnginePnL | null;
 };
 export type BrokerPositionPnL = {
-  symbol: string; net_qty: number; buy_qty: number; sell_qty: number;
+  symbol: string; product: string; net_qty: number; buy_qty: number; sell_qty: number;
   avg_buy: number; avg_sell: number; realized_pnl: number; is_open: boolean;
   total_pnl: number; ltp: number | null; mtm_pending: boolean;
   vwap?: number | null;
@@ -111,7 +111,7 @@ export type BrokerPnL = {
   total_realized: number; total_pnl: number; open_count: number;
   mtm_pending_count: number; per_position: BrokerPositionPnL[];
   total_unrealized: number;   // total_pnl - total_realized
-  net_traded_value: number;   // sum(sell) - sum(buy); positive = net sold
+  net_traded_value: number;   // sum(buy) - sum(sell); positive = net bought
 };
 export type Position = {
   symbol: string; side: string; quantity: number; average_price: number; last_price: number;

@@ -4,8 +4,10 @@
 install:
 	python3 -m pip install -e ".[dev]"
 
+# The Kotak SDK is installed from the VENDORED wheel: GitHub blocked the upstream repo on
+# 2026-11-05 ("Repository access blocked"), so pyproject's [broker] extra can no longer resolve.
 install-broker:
-	python3 -m pip install -e ".[dev,broker]"
+	python3 -m pip install -e ".[dev]" ./vendor/neo_api_client-2.0.0-py3-none-any.whl
 
 lint:
 	ruff check src tests

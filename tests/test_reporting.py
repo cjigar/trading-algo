@@ -289,12 +289,54 @@ def test_unrealized_is_zero_for_a_fully_squared_account():
     assert s.total_unrealized == Decimal(0)
 
 
-def test_net_traded_value_is_sell_minus_buy_across_all_positions():
-    """Net value of trades: positive = net sold. Spans open and squared rows alike."""
+def test_net_traded_value_is_buy_minus_sell_across_all_positions():
+    """Net cash outlay: positive = net bought. Spans open and squared rows alike.
+
+    The sign is fixed by the reference account screen, via the identity the code itself
+    implements: sum(sell-buy) == total_pnl - sum(net*ltp). For that book (P/L +20,306;
+    sum(net*ltp) = -18,085 across its four open legs) sum(sell-buy) is +38,391, yet the
+    broker's tile read -38,351 -- so the tile is buy-sell, not sell-buy.
+    """
     s = summarize_broker_positions([
         {"trdSym": "A", "tok": "1", "flBuyQty": "100", "flSellQty": "0",
          "buyAmt": "1000", "sellAmt": "0"},
         {"trdSym": "B", "tok": "2", "flBuyQty": "0", "flSellQty": "50",
          "buyAmt": "0", "sellAmt": "400"},
     ], quotes={})
-    assert s.net_traded_value == Decimal("-600")
+    assert s.net_traded_value == Decimal("600")
+
+
+def test_net_traded_value_is_negative_when_premium_was_collected():
+    """A short that collected premium is a net INFLOW, so the tile reads negative."""
+    s = summarize_broker_positions([
+        {"trdSym": "SHORT", "tok": "1", "flBuyQty": "0", "flSellQty": "200",
+         "buyAmt": "0", "sellAmt": "31324"},
+    ], quotes={})
+    assert s.net_traded_value == Decimal("-31324")
+
+
+def test_squared_position_exposes_its_live_price():
+    """The broker screen shows an LTP for squared rows, and the branch pays to fetch them;
+    discarding it before display would make that fetch pointless."""
+    s = summarize_broker_positions(
+        [{"trdSym": "SQ", "tok": "111", "flBuyQty": "50", "flSellQty": "50",
+          "buyAmt": "100", "sellAmt": "120"}],
+        quotes={"111": Decimal("9.75")},
+    )
+    pos = s.per_position[0]
+    assert pos.ltp == Decimal("9.75")
+    assert pos.total_pnl == Decimal("20")      # P&L unaffected: net is 0
+    assert pos.mtm_pending is False
+
+
+def test_position_carries_its_product_code():
+    """Kotak returns one row per (instrument, PRODUCT), so MIS and NRML of the same strike
+    share a trading symbol. Joining the product by symbol in the UI would pick the wrong one,
+    so each position carries its own."""
+    s = summarize_broker_positions([
+        {"trdSym": "X", "tok": "7", "prod": "MIS",
+         "flBuyQty": "0", "flSellQty": "10", "buyAmt": "0", "sellAmt": "100"},
+        {"trdSym": "X", "tok": "7", "prod": "NRML",
+         "flBuyQty": "0", "flSellQty": "20", "buyAmt": "0", "sellAmt": "200"},
+    ], quotes={})
+    assert sorted(p.product for p in s.per_position) == ["MIS", "NRML"]

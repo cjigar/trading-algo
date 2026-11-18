@@ -232,6 +232,7 @@ class BrokerPositionPnL:
     total_pnl: Decimal = Decimal(0)  # live M2M = (sell_val - buy_val) + net*ltp (== realized if flat)
     mtm_pending: bool = False  # open but no live quote yet -> total_pnl falls back to realized
     vwap: Decimal | None = None  # session VWAP for the position's option (None if outside chain window)
+    product: str = ""  # Kotak product code (MIS/NRML). Rows are per (instrument, product).
 
 
 @dataclass(frozen=True)
@@ -242,11 +243,14 @@ class BrokerPnLSummary:
     open_count: int
     mtm_pending_count: int = 0  # open positions still awaiting a live quote
     total_unrealized: Decimal = Decimal(0)  # the marked-to-market part: total_pnl - total_realized
-    # Net value of trades across every position, open and squared: sum(sellAmt) - sum(buyAmt).
-    # Positive = net sold. Derived from first principles, NOT reconciled against the Kotak app's
-    # own "Net traded value" tile (the account traded between the reference screenshot and
-    # implementation, so the figures could not be compared at the same instant) -- if the sign
-    # ever reads inverted against Kotak, this is the line to flip.
+    # Net cash outlay across every position, open and squared: sum(buyAmt) - sum(sellAmt).
+    # Positive = net bought; negative = net premium collected.
+    #
+    # The sign is fixed by the reference account screen rather than assumed. Using the identity
+    # this module implements, sum(sell-buy) == total_pnl - sum(net*ltp): that book showed P/L
+    # +20,306 with sum(net*ltp) = -18,085 over its four open legs, so sum(sell-buy) = +38,391
+    # while the broker's own tile read -38,351 (the 40 gap is its rounded display values).
+    # Negative against a positive sum(sell-buy) means the tile is buy-sell.
     net_traded_value: Decimal = Decimal(0)
 
 
@@ -290,7 +294,10 @@ def summarize_broker_positions(
         net = bq - sq
         ltp = quotes.get(str(r.get("tok", "")))
         if net == 0:
-            total, used_ltp, mtm_pending = sell_val - buy_val, None, False
+            # Squared: P&L is settled cash, so no quote is needed and it is never mtm_pending.
+            # The price is still surfaced, because the broker's positions screen shows an LTP
+            # for closed rows and the refresh deliberately fetches them.
+            total, used_ltp, mtm_pending = sell_val - buy_val, ltp, False
         elif ltp is not None:
             total, used_ltp, mtm_pending = (sell_val - buy_val) + Decimal(net) * ltp, ltp, False
         else:
@@ -298,10 +305,11 @@ def summarize_broker_positions(
             pending += 1
         total_realized += realized
         total_pnl += total
-        net_traded_value += sell_val - buy_val
+        net_traded_value += buy_val - sell_val
         out.append(
             BrokerPositionPnL(
-                symbol=str(r.get("trdSym", "")), net_qty=net, buy_qty=bq, sell_qty=sq,
+                symbol=str(r.get("trdSym", "")), product=str(r.get("prod", "") or ""),
+                net_qty=net, buy_qty=bq, sell_qty=sq,
                 avg_buy=avg_buy, avg_sell=avg_sell, realized_pnl=realized, is_open=net != 0,
                 ltp=used_ltp, total_pnl=total, mtm_pending=mtm_pending,
                 vwap=vwaps.get(str(r.get("tok", ""))),

@@ -60,7 +60,7 @@ def main() -> int:
         _load_neo_api()
     except Exception as exc:  # noqa: BLE001
         print(f"❌ Kotak SDK not available: {exc}")
-        print('   Install with: pip install ".[broker]"  (or build image with INSTALL_BROKER=1)')
+        print('   Install with: make install-broker  (vendored wheel; or build image with INSTALL_BROKER=1)')
         return 1
     if not secrets.is_complete():
         print(f"❌ credentials incomplete; missing={secrets.missing_fields()}")

@@ -70,7 +70,6 @@ export default function Dashboard() {
   const pnl = data?.pnl;
   const orders = data?.orders ?? [];
   const brokerTrades = data?.broker_trades ?? [];
-  const brokerPositions = data?.broker_positions ?? [];
   const brokerPnl = data?.broker_pnl ?? null;
   const underlyings = state?.oi_underlyings ?? [];
   const shownUnderlying = chainUnderlying ?? chainView?.underlying ?? activeUnderlying;
@@ -125,7 +124,7 @@ export default function Dashboard() {
         </div>
       )}
       {tab === "Positions" && (
-        <BrokerPositionsView brokerPnl={brokerPnl} rawPositions={brokerPositions} />
+        <BrokerPositionsView brokerPnl={brokerPnl} />
       )}
       {tab === "Orders" && <DataTable rows={orders as unknown as Record<string, unknown>[]} />}
       {tab === "Trades" && <DataTable rows={brokerTrades as unknown as Record<string, unknown>[]} />}

@@ -39,8 +39,9 @@ def _load_neo_api():  # pragma: no cover - requires the external SDK
         from neo_api_client import NeoAPI
     except ImportError as exc:  # noqa: F841
         raise BrokerError(
-            "neo_api_client is not installed. Install it with `make install-broker` "
-            "(git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.2). "
+            "neo_api_client is not installed. Install it with `make install-broker`, which "
+            "uses the vendored wheel in vendor/ (the upstream repo was blocked by GitHub on "
+            "2026-11-05 and the SDK is on no package index). "
             "Live mode requires the Kotak Neo SDK."
         ) from exc
     return NeoAPI
@@ -131,10 +132,30 @@ class KotakClient:
                 continue
             try:
                 ltp = Decimal(str(row.get("ltp")))
+                # is_finite() rejects NaN and Infinity. Both PARSE, so testing them after the
+                # guard would be worse than useless: `Decimal("NaN") > 0` raises InvalidOperation
+                # outside the try and loses every good price in the batch, and Infinity would
+                # survive to float() and serialise as bare `Infinity`, invalid JSON for the SSE
+                # consumer.
+                if not ltp.is_finite() or ltp <= 0:
+                    continue
             except (ArithmeticError, ValueError, TypeError):
                 continue
-            if ltp > 0:
-                out[token] = ltp
+            out[token] = ltp
+
+        # The SDK does not raise on API errors -- rest.py's status check is commented out, so a
+        # 401/500 body, a non-JSON gateway page and a validation failure all come back as plain
+        # dicts and _as_list wraps them into a row with no exchange_token. Without this log the
+        # caller's except never fires and positions sit at mtm_pending with no diagnostic; the
+        # last silent quote outage ran from 2026-09-15 to 2026-11-18 unnoticed.
+        if not out:
+            log.warning(
+                "broker_quotes_empty",
+                requested=len(tokens), rows=len(rows), sample=str(rows[:1])[:200],
+            )
+        elif len(out) < len(tokens):
+            # Partial responses are normal (an untraded strike has no price), hence info.
+            log.info("broker_quotes_partial", requested=len(tokens), priced=len(out))
         return out
 
     # -- Param conversion --------------------------------------------------------------

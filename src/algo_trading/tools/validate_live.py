@@ -75,7 +75,7 @@ def main() -> int:  # noqa: C901 - a linear diagnostic script
         results["sdk"] = PASS
     except Exception as exc:  # noqa: BLE001
         print(f"{FAIL} SDK not installed: {exc}")
-        print("      Install with: pip install \".[broker]\"  (or build image with INSTALL_BROKER=1)")
+        print('   Install with: make install-broker  (vendored wheel; or build image with INSTALL_BROKER=1)')
         return 1
 
     # --- 0b. credentials complete? ---

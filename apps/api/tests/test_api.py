@@ -286,7 +286,8 @@ def test_broker_pnl_exposes_summary_tiles(client, auth, repo):
     body = client.get("/api/broker-pnl", headers=auth).json()
     assert body["total_realized"] == 0.0
     assert body["total_unrealized"] == body["total_pnl"] - body["total_realized"]
-    assert body["net_traded_value"] == 31324.0   # sum(sell) - sum(buy), positive = net sold
+    # buy - sell: a short that collected 31,324 of premium is a net INFLOW, so negative.
+    assert body["net_traded_value"] == -31324.0
 
 
 def test_broker_pnl_exposes_position_vwap(client, auth, repo):

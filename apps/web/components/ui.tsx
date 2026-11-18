@@ -166,10 +166,7 @@ export const DataTable = memo(function DataTable({ rows }: { rows: Record<string
 // The account positions view: a summary strip over every broker position, mirroring the Kotak
 // Neo positions screen. Squared rows (net 0) are de-emphasised but still priced, because the
 // broker screen shows their LTP too.
-export function BrokerPositionsView(
-  { brokerPnl, rawPositions }:
-  { brokerPnl: BrokerPnL | null; rawPositions: Record<string, unknown>[] },
-) {
+export function BrokerPositionsView({ brokerPnl }: { brokerPnl: BrokerPnL | null }) {
   if (!brokerPnl) {
     return <p className="text-sm text-neutral-500">Waiting for the account refresh…</p>;
   }
@@ -177,14 +174,6 @@ export function BrokerPositionsView(
     `${n < 0 ? "-" : "+"}${Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
   const plain = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const tone = (n: number) => (n >= 0 ? "text-emerald-400" : "text-red-400");
-
-  // `prod` (MIS/NRML) is only on the raw broker rows, not the P&L summary; join it by symbol.
-  const productBySymbol = new Map<string, string>();
-  for (const r of rawPositions) {
-    const sym = String((r as { trdSym?: unknown }).trdSym ?? "");
-    const prod = String((r as { prod?: unknown }).prod ?? "");
-    if (sym) productBySymbol.set(sym, prod);
-  }
 
   // Open positions first (what the operator acts on), then squared, each by size of P&L.
   const rows = [...brokerPnl.per_position].sort((a, b) =>
@@ -229,16 +218,16 @@ export function BrokerPositionsView(
             </tr>
           </thead>
           <tbody>
-            {rows.map((p) => {
+            {rows.map((p, i) => {
               // A short is carried at its average SELL price, a long at its average BUY price.
               const avgCost = p.net_qty < 0 ? p.avg_sell : p.avg_buy;
               return (
                 <tr
-                  key={p.symbol}
+                  key={`${p.symbol}|${p.product}|${i}`}
                   className={`border-t border-neutral-800/60 ${p.is_open ? "" : "text-neutral-500"}`}
                 >
                   <td className="px-3 py-2 text-left">{p.symbol}</td>
-                  <td className="px-3 py-2 text-left">{productBySymbol.get(p.symbol) || "—"}</td>
+                  <td className="px-3 py-2 text-left">{p.product || "—"}</td>
                   <td className="px-3 py-2 text-right">{p.net_qty}</td>
                   <td className="px-3 py-2 text-right">{plain(avgCost)}</td>
                   <td className="px-3 py-2 text-right">{p.ltp === null ? "—" : plain(p.ltp)}</td>

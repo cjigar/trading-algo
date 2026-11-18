@@ -433,22 +433,29 @@ class Orchestrator:
 
         return summary
 
+    # Tokens per quotes() request. They are joined into the URL PATH as `seg|token` pairs
+    # (~18 encoded chars each), so a batch that grows with the day's squared rows would
+    # eventually fail on path length. Chunking bounds that.
+    _QUOTE_CHUNK = 50
+
     def _mark_open_positions(self, positions: list[dict]) -> int:
         """Price the account's positions in realtime for live M2M.
 
         LTP resolution is websocket-first, REST-fallback. The quote websocket
         (``wss://mlhsm.kotaksecurities.com``) was decommissioned by Kotak on 2026-09-15, so in
-        practice every price today comes from the batched REST ``quotes()`` call below; keeping
-        the feed as the preferred source means a future SDK-v3 migration restores sub-second
-        pricing with no change here.
+        practice every price today comes from the batched REST ``quotes()`` calls below; keeping
+        the feed preferred means a future SDK-v3 migration restores sub-second pricing with no
+        change here. A feed LTP of 0 is NOT a price (an untraded strike ticks 0, and "0" is
+        truthy in ``normalize_tick``) — marking an open short at zero would show it as having
+        collected full premium — so it is ignored and the REST fallback still runs.
 
         ALL positions are priced, not only open ones: the Kotak positions screen shows an LTP for
-        squared rows too. A squared row still needs no quote for its P&L (that reduces to
-        ``sell-buy``), so a missing price there is cosmetic and never ``mtm_pending``. Open
-        positions are additionally subscribed to the feed once, which is harmless while it is dead.
+        squared rows too. They are fetched in a SEPARATE request, because a squared row is
+        cosmetic and must never be able to fail the batch the open positions depend on.
 
         Returns the number of tokens priced this cycle."""
-        candidates: list[tuple[str, str]] = []
+        open_pairs: dict[str, str] = {}      # token -> segment, deduped
+        squared_pairs: dict[str, str] = {}
         for p in positions:
             try:
                 net = int(Decimal(str(p.get("flBuyQty") or 0))) - int(
@@ -459,38 +466,56 @@ class Orchestrator:
             token = str(p.get("tok", ""))
             if not token:
                 continue
-            seg = str(p.get("exSeg", "")).lower()
-            candidates.append((token, seg))
+            raw_seg = str(p.get("exSeg", "")).lower()
+            try:
+                segment = ExchangeSegment(raw_seg)
+            except ValueError:
+                # The segment is interpolated into the quotes URL path, so an unknown value
+                # would fail the whole batch rather than just its own token.
+                log.warning("broker_position_bad_segment", token=token, seg=p.get("exSeg"))
+                continue
             if net == 0:
-                continue  # squared: priced for display, but never subscribed
+                squared_pairs.setdefault(token, raw_seg)
+                continue  # squared: priced for display, never subscribed
+            open_pairs.setdefault(token, raw_seg)
             if token not in self._broker_marked_tokens and self._coordinator is not None:
                 try:
-                    self._coordinator.subscribe_option(token, ExchangeSegment(seg))
+                    self._coordinator.subscribe_option(token, segment)
                     self._broker_marked_tokens.add(token)
-                except Exception:  # noqa: BLE001 - an unknown segment / feed hiccup must not stall
+                except Exception:  # noqa: BLE001 - a feed hiccup must not stall the refresh
                     log.warning("broker_position_subscribe_failed",
                                 token=token, seg=p.get("exSeg"))
 
         quotes: dict[str, Decimal] = {}
-        for token, _seg in candidates:
+        for token in (*open_pairs, *squared_pairs):
             ltp = self._ltp.get(token)
-            if ltp is not None:
+            if ltp is not None and ltp > 0:
                 quotes[token] = ltp
 
-        missing = [(t, seg) for t, seg in candidates if t not in quotes]
-        if missing:
-            try:
-                # One batched REST call for everything the feed did not supply. setdefault,
-                # not update: a feed price always wins, even if the broker echoes back a token
-                # we did not ask for.
-                for token, ltp in self._broker.quotes(missing).items():
-                    quotes.setdefault(token, ltp)
-            except Exception:  # noqa: BLE001 - a quotes outage degrades to mtm_pending, never a stall
-                log.warning("broker_quotes_failed", tokens=len(missing))
+        # Open positions first and alone: their prices are load-bearing.
+        for pairs in (open_pairs, squared_pairs):
+            missing = [(t, seg) for t, seg in pairs.items() if t not in quotes]
+            self._fetch_quotes_into(quotes, missing)
 
         if quotes:
             self._repo.upsert_live_quotes(quotes)
         return len(quotes)
+
+    def _fetch_quotes_into(self, quotes: dict[str, Decimal], pairs: list[tuple[str, str]]) -> None:
+        """Merge REST prices for ``pairs`` into ``quotes``, chunked and individually fail-safe.
+
+        ``setdefault``, not ``update``: a feed price always wins, even if the broker echoes back
+        a token that was not requested. A chunk that fails degrades those tokens to mtm_pending
+        and never stalls the refresh."""
+        for i in range(0, len(pairs), self._QUOTE_CHUNK):
+            chunk = pairs[i:i + self._QUOTE_CHUNK]
+            if not chunk:
+                continue
+            try:
+                for token, ltp in self._broker.quotes(chunk).items():
+                    quotes.setdefault(token, ltp)
+            except Exception:  # noqa: BLE001 - a quotes outage degrades to mtm_pending
+                log.warning("broker_quotes_failed", tokens=len(chunk))
 
     @property
     def is_oi_mode(self) -> bool:

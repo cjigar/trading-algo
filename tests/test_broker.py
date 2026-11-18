@@ -222,3 +222,58 @@ def test_paper_broker_quotes_is_empty():
     from algo_trading.execution.paper_broker import PaperBroker
 
     assert PaperBroker().quotes([("A", "bse_fo")]) == {}
+
+
+def test_quotes_nan_does_not_abort_the_batch():
+    """Decimal("NaN") parses, so a naive `ltp > 0` raises OUTSIDE the guard and loses the
+    whole batch. One garbage field must not cost the good prices beside it."""
+    client, _ = _kotak_with_quotes([
+        {"exchange_token": "A", "ltp": "12.5"},
+        {"exchange_token": "B", "ltp": "NaN"},
+        {"exchange_token": "C", "ltp": "9"},
+    ])
+    assert client.quotes([(t, "bse_fo") for t in "ABC"]) == {
+        "A": Decimal("12.5"), "C": Decimal("9"),
+    }
+
+
+def test_quotes_drops_infinity():
+    """Infinity parses AND passes `> 0`; it would reach float() and emit bare `Infinity`,
+    which is invalid JSON for the SSE consumer."""
+    client, _ = _kotak_with_quotes([
+        {"exchange_token": "A", "ltp": "Infinity"},
+        {"exchange_token": "B", "ltp": "3"},
+    ])
+    assert client.quotes([("A", "bse_fo"), ("B", "bse_fo")]) == {"B": Decimal("3")}
+
+
+def test_quotes_logs_when_a_response_yields_no_prices(monkeypatch):
+    """The SDK returns error DICTS rather than raising (rest.py's status check is commented
+    out), so the orchestrator's except never fires. Without a log an outage is silent -- the
+    last one went unnoticed for two months."""
+    import algo_trading.broker.kotak_client as kc
+
+    seen: list[tuple] = []
+    monkeypatch.setattr(kc.log, "warning", lambda ev, **kw: seen.append((ev, kw)))
+    client, _ = _kotak_with_quotes({"error": [{"message": "Validation Errors!"}]})
+    assert client.quotes([("A", "bse_fo")]) == {}
+    assert any(ev == "broker_quotes_empty" for ev, _ in seen)
+
+
+def test_no_operator_instruction_points_at_the_blocked_repo():
+    """GitHub blocked Kotak-neo-api-v2 on 2026-11-05 and the SDK is on no package index, so
+    `pip install ".[broker]"` and the git URL are both dead ends. An operator who hits one of
+    these messages at 09:20 IST must be sent somewhere that works."""
+    import pathlib as _p
+
+    root = _p.Path(__file__).resolve().parents[1] / "src"
+    offenders = [
+        f"{path.relative_to(root)}:{i}"
+        for path in root.rglob("*.py")
+        for i, line in enumerate(path.read_text().splitlines(), 1)
+        if "Kotak-neo-api-v2.git" in line or '".[broker]"' in line
+    ]
+    assert not offenders, (
+        "These operator-facing instructions point at the blocked upstream repo; send them to "
+        f"the vendored wheel (make install-broker) instead: {offenders}"
+    )

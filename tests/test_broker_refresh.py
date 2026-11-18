@@ -210,8 +210,12 @@ def test_refresh_bad_segment_is_fail_safe(scrip, engine):
 # -- REST-sourced pricing (the quote websocket is decommissioned) -----------------------
 
 
-def _broker(positions, prices=None, raises=False):
-    """PaperBroker with a fixed position list and a recording/stubbed quotes()."""
+def _broker(positions, prices=None, raises=False, echo_unrequested=False):
+    """PaperBroker with a fixed position list and a recording/stubbed quotes().
+
+    By default the stub returns ONLY the tokens it was asked for, as the real endpoint does.
+    ``echo_unrequested`` models a broker that volunteers extra tokens, used to prove the feed
+    price still wins."""
     asked: list[str] = []
 
     class B(PaperBroker):
@@ -228,7 +232,11 @@ def _broker(positions, prices=None, raises=False):
             asked.extend(t for t, _ in tokens)
             if raises:
                 raise RuntimeError("quotes endpoint down")
-            return dict(prices or {})
+            table = dict(prices or {})
+            if echo_unrequested:
+                return table
+            requested = {t for t, _ in tokens}
+            return {t: v for t, v in table.items() if t in requested}
 
     return B(), asked
 
@@ -244,7 +252,7 @@ def test_refresh_prices_tokens_from_rest_when_feed_is_silent(scrip, engine):
 
 def test_websocket_ltp_takes_precedence_over_rest(scrip, engine):
     """A live tick beats REST, and that token is not requested over REST at all."""
-    broker, asked = _broker(OPEN_POSITIONS, {"835470": Decimal("150")})
+    broker, asked = _broker(OPEN_POSITIONS, {"835470": Decimal("150")}, echo_unrequested=True)
     orch = _orch(scrip, engine, broker)
     orch._coordinator = FakeCoord()
     orch._ltp["835470"] = Decimal("151")
@@ -285,3 +293,76 @@ def test_paper_mode_makes_no_quote_call(scrip, engine):
     """No coordinator and a session-less PaperBroker must stay harmless."""
     orch = _orch(scrip, engine, PaperBroker())
     orch.refresh_broker_account()  # must not raise
+
+
+def test_zero_websocket_tick_falls_back_to_rest(scrip, engine):
+    """A 0 tick is a real thing (an untraded deep-OTM strike, and "0" is truthy in
+    normalize_tick). Treating it as a price would mark an open short at zero -- here that
+    would show +31,324 instead of +1,324 -- and would also suppress the good REST price."""
+    broker, asked = _broker(OPEN_POSITIONS, {"835470": Decimal("150")})
+    orch = _orch(scrip, engine, broker)
+    orch._coordinator = FakeCoord()
+    orch._ltp["835470"] = Decimal("0")
+    orch.refresh_broker_account()
+    assert "835470" in asked, "a zero tick must not suppress the REST fallback"
+    assert Repository(engine).live_quotes(["835470"]) == {"835470": Decimal("150")}
+
+
+def test_unknown_segment_is_never_sent_to_quotes(scrip, engine):
+    """Segments go into the quotes URL PATH, so one bad value fails the batch for every
+    token in it -- including the open positions that actually need pricing."""
+    rows = [
+        {"trdSym": "BAD", "tok": "5", "exSeg": "bogus_seg",
+         "flBuyQty": "0", "flSellQty": "10", "buyAmt": "0", "sellAmt": "100"},
+        {"trdSym": "GOOD", "tok": "6", "exSeg": "bse_fo",
+         "flBuyQty": "0", "flSellQty": "10", "buyAmt": "0", "sellAmt": "100"},
+    ]
+    broker, asked = _broker(rows, {"6": Decimal("4")})
+    orch = _orch(scrip, engine, broker)
+    orch._coordinator = FakeCoord()
+    orch.refresh_broker_account()
+    assert "5" not in asked
+    assert "6" in asked
+
+
+def test_duplicate_tokens_are_requested_once(scrip, engine):
+    """Kotak returns one row per (instrument, product), so MIS and NRML of the same strike
+    share a token. Duplicates would be repeated in the URL for no gain."""
+    dup = [
+        {"trdSym": "X", "tok": "7", "exSeg": "bse_fo", "prod": "MIS",
+         "flBuyQty": "0", "flSellQty": "10", "buyAmt": "0", "sellAmt": "100"},
+        {"trdSym": "X", "tok": "7", "exSeg": "bse_fo", "prod": "NRML",
+         "flBuyQty": "0", "flSellQty": "20", "buyAmt": "0", "sellAmt": "200"},
+    ]
+    broker, asked = _broker(dup, {"7": Decimal("5")})
+    orch = _orch(scrip, engine, broker)
+    orch._coordinator = FakeCoord()
+    orch.refresh_broker_account()
+    assert asked.count("7") == 1
+
+
+def test_open_tokens_are_quoted_separately_from_squared(scrip, engine):
+    """A squared row is cosmetic; it must never be able to poison the batch the open
+    positions depend on."""
+    calls: list[list[str]] = []
+
+    class B(PaperBroker):
+        def positions(self):
+            return OPEN_POSITIONS
+
+        def order_report(self):
+            return []
+
+        def trade_report(self):
+            return []
+
+        def quotes(self, tokens):
+            calls.append([t for t, _ in tokens])
+            return {}
+
+    orch = _orch(scrip, engine, B())
+    orch._coordinator = FakeCoord()
+    orch.refresh_broker_account()
+    assert len(calls) >= 2, "open and squared tokens must not share one call"
+    assert "111" not in calls[0], "the first call carries the open tokens"
+    assert any("111" in c for c in calls[1:])
