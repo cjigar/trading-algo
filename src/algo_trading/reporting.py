@@ -241,6 +241,13 @@ class BrokerPnLSummary:
     total_pnl: Decimal  # account live M2M (realized + unrealized) — matches the Kotak app
     open_count: int
     mtm_pending_count: int = 0  # open positions still awaiting a live quote
+    total_unrealized: Decimal = Decimal(0)  # the marked-to-market part: total_pnl - total_realized
+    # Net value of trades across every position, open and squared: sum(sellAmt) - sum(buyAmt).
+    # Positive = net sold. Derived from first principles, NOT reconciled against the Kotak app's
+    # own "Net traded value" tile (the account traded between the reference screenshot and
+    # implementation, so the figures could not be compared at the same instant) -- if the sign
+    # ever reads inverted against Kotak, this is the line to flip.
+    net_traded_value: Decimal = Decimal(0)
 
 
 def _to_int(v: object) -> int:
@@ -270,6 +277,7 @@ def summarize_broker_positions(
     out: list[BrokerPositionPnL] = []
     total_realized = Decimal(0)
     total_pnl = Decimal(0)
+    net_traded_value = Decimal(0)
     pending = 0
     for r in rows:
         bq = _to_int(r.get("flBuyQty"))
@@ -290,6 +298,7 @@ def summarize_broker_positions(
             pending += 1
         total_realized += realized
         total_pnl += total
+        net_traded_value += sell_val - buy_val
         out.append(
             BrokerPositionPnL(
                 symbol=str(r.get("trdSym", "")), net_qty=net, buy_qty=bq, sell_qty=sq,
@@ -305,6 +314,8 @@ def summarize_broker_positions(
         total_pnl=total_pnl,
         open_count=sum(1 for p in out if p.is_open),
         mtm_pending_count=pending,
+        total_unrealized=total_pnl - total_realized,
+        net_traded_value=net_traded_value,
     )
 
 

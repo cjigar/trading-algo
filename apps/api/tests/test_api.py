@@ -275,6 +275,20 @@ def test_broker_pnl_live_m2m(client, auth, repo):
     assert pos["total_pnl"] == 1324.0 and pos["ltp"] == 150.0 and pos["mtm_pending"] is False
 
 
+def test_broker_pnl_exposes_summary_tiles(client, auth, repo):
+    """The Positions tab's strip needs Unrealised and Net traded value alongside Realised."""
+    # Open short 200 @ 31324 sold; LTP 150 -> total 1324, nothing squared so realised is 0.
+    repo.replace_broker_positions([
+        {"trdSym": "SENSEX77500PE", "tok": "835470", "flBuyQty": "0", "flSellQty": "200",
+         "buyAmt": "0", "sellAmt": "31324"},
+    ])
+    repo.upsert_live_quotes({"835470": Decimal("150")})
+    body = client.get("/api/broker-pnl", headers=auth).json()
+    assert body["total_realized"] == 0.0
+    assert body["total_unrealized"] == body["total_pnl"] - body["total_realized"]
+    assert body["net_traded_value"] == 31324.0   # sum(sell) - sum(buy), positive = net sold
+
+
 def test_broker_pnl_exposes_position_vwap(client, auth, repo):
     from decimal import Decimal
     tok = "OPT1"

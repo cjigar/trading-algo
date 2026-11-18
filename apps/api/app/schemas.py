@@ -292,6 +292,8 @@ class BrokerPositionPnLOut(BaseModel):
 class BrokerPnLOut(BaseModel):
     total_realized: float  # realized on matched (squared) qty
     total_pnl: float  # account live M2M (realized + unrealized) — matches the Kotak app
+    total_unrealized: float  # the marked-to-market part: total_pnl - total_realized
+    net_traded_value: float  # sum(sellAmt) - sum(buyAmt) across all positions; positive = net sold
     open_count: int
     mtm_pending_count: int  # open positions still awaiting a live quote
     per_position: list[BrokerPositionPnLOut]
@@ -302,6 +304,8 @@ def broker_pnl_out(rows: list[dict], quotes: dict[str, Decimal] | None = None,
     s = summarize_broker_positions(rows, quotes, vwaps)
     return BrokerPnLOut(
         total_realized=float(s.total_realized), total_pnl=float(s.total_pnl),
+        total_unrealized=float(s.total_unrealized),
+        net_traded_value=float(s.net_traded_value),
         open_count=s.open_count, mtm_pending_count=s.mtm_pending_count,
         per_position=[BrokerPositionPnLOut(
             symbol=p.symbol, net_qty=p.net_qty, buy_qty=p.buy_qty, sell_qty=p.sell_qty,

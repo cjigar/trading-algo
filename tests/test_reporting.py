@@ -262,3 +262,39 @@ def test_summarize_chain_maps_vwap_per_side():
     row = cs.per_strike[0]
     assert row.ce_vwap == Decimal("5.0")
     assert row.pe_vwap is None
+
+
+# -- Account summary tiles (Unrealised / Net traded value) -----------------------------
+
+
+def test_unrealized_is_total_minus_realized():
+    """Unrealised is the marked-to-market part: whatever the live total adds over realised."""
+    s = summarize_broker_positions(
+        [{"trdSym": "X", "tok": "1", "flBuyQty": "0", "flSellQty": "100",
+          "buyAmt": "0", "sellAmt": "25358"}],
+        quotes={"1": Decimal("104.25")},
+    )
+    assert s.total_realized == Decimal(0)          # nothing squared yet
+    assert s.total_unrealized == s.total_pnl - s.total_realized
+    assert s.total_unrealized == s.total_pnl
+
+
+def test_unrealized_is_zero_for_a_fully_squared_account():
+    s = summarize_broker_positions(
+        [{"trdSym": "SQ", "tok": "1", "flBuyQty": "50", "flSellQty": "50",
+          "buyAmt": "100", "sellAmt": "120"}],
+        quotes={},
+    )
+    assert s.total_realized == s.total_pnl
+    assert s.total_unrealized == Decimal(0)
+
+
+def test_net_traded_value_is_sell_minus_buy_across_all_positions():
+    """Net value of trades: positive = net sold. Spans open and squared rows alike."""
+    s = summarize_broker_positions([
+        {"trdSym": "A", "tok": "1", "flBuyQty": "100", "flSellQty": "0",
+         "buyAmt": "1000", "sellAmt": "0"},
+        {"trdSym": "B", "tok": "2", "flBuyQty": "0", "flSellQty": "50",
+         "buyAmt": "0", "sellAmt": "400"},
+    ], quotes={})
+    assert s.net_traded_value == Decimal("-600")
