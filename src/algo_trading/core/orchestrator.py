@@ -434,14 +434,21 @@ class Orchestrator:
         return summary
 
     def _mark_open_positions(self, positions: list[dict]) -> int:
-        """Price the account's open positions in realtime for live M2M.
+        """Price the account's positions in realtime for live M2M.
 
-        For each open broker position (net qty != 0), subscribe its instrument to the live quote
-        feed once (works for options and equity — the raw ``exSeg`` matches an ``ExchangeSegment``
-        value) and publish whatever LTP the feed has to ``live_quotes``, where the P&L read path
-        marks it. Newly-subscribed tokens have no tick yet on the first cycle; they price in on the
-        next. Squared positions need no quote. Returns the number of tokens priced this cycle."""
-        quotes: dict[str, Decimal] = {}
+        LTP resolution is websocket-first, REST-fallback. The quote websocket
+        (``wss://mlhsm.kotaksecurities.com``) was decommissioned by Kotak on 2026-09-15, so in
+        practice every price today comes from the batched REST ``quotes()`` call below; keeping
+        the feed as the preferred source means a future SDK-v3 migration restores sub-second
+        pricing with no change here.
+
+        ALL positions are priced, not only open ones: the Kotak positions screen shows an LTP for
+        squared rows too. A squared row still needs no quote for its P&L (that reduces to
+        ``sell-buy``), so a missing price there is cosmetic and never ``mtm_pending``. Open
+        positions are additionally subscribed to the feed once, which is harmless while it is dead.
+
+        Returns the number of tokens priced this cycle."""
+        candidates: list[tuple[str, str]] = []
         for p in positions:
             try:
                 net = int(Decimal(str(p.get("flBuyQty") or 0))) - int(
@@ -450,20 +457,37 @@ class Orchestrator:
             except (ValueError, ArithmeticError):
                 continue
             token = str(p.get("tok", ""))
-            if net == 0 or not token:
+            if not token:
                 continue
+            seg = str(p.get("exSeg", "")).lower()
+            candidates.append((token, seg))
+            if net == 0:
+                continue  # squared: priced for display, but never subscribed
             if token not in self._broker_marked_tokens and self._coordinator is not None:
                 try:
-                    self._coordinator.subscribe_option(
-                        token, ExchangeSegment(str(p.get("exSeg", "")).lower())
-                    )
+                    self._coordinator.subscribe_option(token, ExchangeSegment(seg))
                     self._broker_marked_tokens.add(token)
                 except Exception:  # noqa: BLE001 - an unknown segment / feed hiccup must not stall
                     log.warning("broker_position_subscribe_failed",
                                 token=token, seg=p.get("exSeg"))
+
+        quotes: dict[str, Decimal] = {}
+        for token, _seg in candidates:
             ltp = self._ltp.get(token)
             if ltp is not None:
                 quotes[token] = ltp
+
+        missing = [(t, seg) for t, seg in candidates if t not in quotes]
+        if missing:
+            try:
+                # One batched REST call for everything the feed did not supply. setdefault,
+                # not update: a feed price always wins, even if the broker echoes back a token
+                # we did not ask for.
+                for token, ltp in self._broker.quotes(missing).items():
+                    quotes.setdefault(token, ltp)
+            except Exception:  # noqa: BLE001 - a quotes outage degrades to mtm_pending, never a stall
+                log.warning("broker_quotes_failed", tokens=len(missing))
+
         if quotes:
             self._repo.upsert_live_quotes(quotes)
         return len(quotes)

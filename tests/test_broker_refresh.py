@@ -205,3 +205,83 @@ def test_refresh_bad_segment_is_fail_safe(scrip, engine):
     # invalid exchange segment must not raise out of the poller
     summary = orch.refresh_broker_account()
     assert summary["marked"] == 0
+
+
+# -- REST-sourced pricing (the quote websocket is decommissioned) -----------------------
+
+
+def _broker(positions, prices=None, raises=False):
+    """PaperBroker with a fixed position list and a recording/stubbed quotes()."""
+    asked: list[str] = []
+
+    class B(PaperBroker):
+        def positions(self):
+            return positions
+
+        def order_report(self):
+            return []
+
+        def trade_report(self):
+            return []
+
+        def quotes(self, tokens):
+            asked.extend(t for t, _ in tokens)
+            if raises:
+                raise RuntimeError("quotes endpoint down")
+            return dict(prices or {})
+
+    return B(), asked
+
+
+def test_refresh_prices_tokens_from_rest_when_feed_is_silent(scrip, engine):
+    """With no websocket ticks at all, REST must still price the open positions."""
+    broker, _ = _broker(OPEN_POSITIONS, {"835470": Decimal("150")})
+    orch = _orch(scrip, engine, broker)
+    orch._coordinator = FakeCoord()
+    orch.refresh_broker_account()
+    assert Repository(engine).live_quotes(["835470"]) == {"835470": Decimal("150")}
+
+
+def test_websocket_ltp_takes_precedence_over_rest(scrip, engine):
+    """A live tick beats REST, and that token is not requested over REST at all."""
+    broker, asked = _broker(OPEN_POSITIONS, {"835470": Decimal("150")})
+    orch = _orch(scrip, engine, broker)
+    orch._coordinator = FakeCoord()
+    orch._ltp["835470"] = Decimal("151")
+    orch.refresh_broker_account()
+    assert Repository(engine).live_quotes(["835470"])["835470"] == Decimal("151")
+    assert "835470" not in asked
+
+
+def test_squared_positions_are_priced_too(scrip, engine):
+    """The Kotak positions screen shows an LTP for squared rows, so they are quoted as well."""
+    broker, asked = _broker(OPEN_POSITIONS, {"111": Decimal("9")})
+    orch = _orch(scrip, engine, broker)
+    orch._coordinator = FakeCoord()
+    orch.refresh_broker_account()
+    assert "111" in asked
+    assert Repository(engine).live_quotes(["111"]) == {"111": Decimal("9")}
+
+
+def test_rest_quotes_failure_is_fail_safe(scrip, engine):
+    """A quotes outage degrades to mtm_pending; it must not stall the refresh."""
+    broker, _ = _broker(OPEN_POSITIONS, raises=True)
+    orch = _orch(scrip, engine, broker)
+    orch._coordinator = FakeCoord()
+    orch.refresh_broker_account()  # must not raise
+    assert Repository(engine).live_quotes(["835470", "999", "111"]) == {}
+    assert Repository(engine).latest_broker_positions()  # other stores still updated
+
+
+def test_no_positions_makes_no_quote_call(scrip, engine):
+    broker, asked = _broker([], {})
+    orch = _orch(scrip, engine, broker)
+    orch._coordinator = FakeCoord()
+    orch.refresh_broker_account()
+    assert asked == []
+
+
+def test_paper_mode_makes_no_quote_call(scrip, engine):
+    """No coordinator and a session-less PaperBroker must stay harmless."""
+    orch = _orch(scrip, engine, PaperBroker())
+    orch.refresh_broker_account()  # must not raise
