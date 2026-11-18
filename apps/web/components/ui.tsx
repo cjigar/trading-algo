@@ -162,3 +162,101 @@ export const DataTable = memo(function DataTable({ rows }: { rows: Record<string
     </div>
   );
 });
+
+// The account positions view: a summary strip over every broker position, mirroring the Kotak
+// Neo positions screen. Squared rows (net 0) are de-emphasised but still priced, because the
+// broker screen shows their LTP too.
+export function BrokerPositionsView(
+  { brokerPnl, rawPositions }:
+  { brokerPnl: BrokerPnL | null; rawPositions: Record<string, unknown>[] },
+) {
+  if (!brokerPnl) {
+    return <p className="text-sm text-neutral-500">Waiting for the account refresh…</p>;
+  }
+  const money = (n: number) =>
+    `${n < 0 ? "-" : "+"}${Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  const plain = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const tone = (n: number) => (n >= 0 ? "text-emerald-400" : "text-red-400");
+
+  // `prod` (MIS/NRML) is only on the raw broker rows, not the P&L summary; join it by symbol.
+  const productBySymbol = new Map<string, string>();
+  for (const r of rawPositions) {
+    const sym = String((r as { trdSym?: unknown }).trdSym ?? "");
+    const prod = String((r as { prod?: unknown }).prod ?? "");
+    if (sym) productBySymbol.set(sym, prod);
+  }
+
+  // Open positions first (what the operator acts on), then squared, each by size of P&L.
+  const rows = [...brokerPnl.per_position].sort((a, b) =>
+    a.is_open === b.is_open ? b.total_pnl - a.total_pnl : Number(b.is_open) - Number(a.is_open),
+  );
+
+  const Tile = ({ label, value, className }: { label: string; value: string; className?: string }) => (
+    <div className="min-w-[8rem]">
+      <div className="text-xs text-neutral-400">{label}</div>
+      <div className={`mt-0.5 text-lg font-semibold tabular-nums ${className ?? ""}`}>{value}</div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-x-10 gap-y-3 rounded-lg border border-neutral-800 p-4">
+        <Tile label="Profit/Loss" value={money(brokerPnl.total_pnl)} className={tone(brokerPnl.total_pnl)} />
+        <Tile label="Unrealised P/L" value={money(brokerPnl.total_unrealized)} className={tone(brokerPnl.total_unrealized)} />
+        <Tile label="Realised P/L" value={money(brokerPnl.total_realized)} className={tone(brokerPnl.total_realized)} />
+        <Tile label="Net traded value" value={money(brokerPnl.net_traded_value)} className={tone(brokerPnl.net_traded_value)} />
+        <Tile label="Positions" value={`${brokerPnl.per_position.length}`} />
+      </div>
+
+      {brokerPnl.mtm_pending_count > 0 && (
+        <p className="text-xs text-yellow-500">
+          ⚠ {brokerPnl.mtm_pending_count} open position
+          {brokerPnl.mtm_pending_count === 1 ? "" : "s"} awaiting a live price — their P&amp;L shows
+          realised only, not live M2M.
+        </p>
+      )}
+
+      <div className="overflow-x-auto rounded-md border border-neutral-800">
+        <table className="w-full text-sm tabular-nums">
+          <thead className="bg-neutral-900 text-xs uppercase tracking-wide text-neutral-400">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium">Name</th>
+              <th className="px-3 py-2 text-left font-medium">Type</th>
+              <th className="px-3 py-2 text-right font-medium">Quantity</th>
+              <th className="px-3 py-2 text-right font-medium">Avg. cost</th>
+              <th className="px-3 py-2 text-right font-medium">LTP</th>
+              <th className="px-3 py-2 text-right font-medium">Profit/loss</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((p) => {
+              // A short is carried at its average SELL price, a long at its average BUY price.
+              const avgCost = p.net_qty < 0 ? p.avg_sell : p.avg_buy;
+              return (
+                <tr
+                  key={p.symbol}
+                  className={`border-t border-neutral-800/60 ${p.is_open ? "" : "text-neutral-500"}`}
+                >
+                  <td className="px-3 py-2 text-left">{p.symbol}</td>
+                  <td className="px-3 py-2 text-left">{productBySymbol.get(p.symbol) || "—"}</td>
+                  <td className="px-3 py-2 text-right">{p.net_qty}</td>
+                  <td className="px-3 py-2 text-right">{plain(avgCost)}</td>
+                  <td className="px-3 py-2 text-right">{p.ltp === null ? "—" : plain(p.ltp)}</td>
+                  <td className={`px-3 py-2 text-right ${p.is_open ? tone(p.total_pnl) : ""}`}>
+                    {p.mtm_pending ? (
+                      <span className="text-yellow-500" title="No live price yet — realised only">
+                        MTM pending
+                      </span>
+                    ) : (
+                      money(p.total_pnl)
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}

@@ -2,7 +2,7 @@
 
 import { memo, useCallback, useEffect, useState } from "react";
 
-import { AccountSummary, Banner, DataTable, Metric, SpotTicker, Tabs } from "@/components/ui";
+import { AccountSummary, Banner, DataTable, Metric, SpotTicker, Tabs, BrokerPositionsView } from "@/components/ui";
 import { api, clearToken, type BrokerPnL, type Chain, type EnginePnL, type Greeks, type OiTrends } from "@/lib/api";
 import { fmtOi } from "@/lib/format";
 import { useStream } from "@/lib/useStream";
@@ -68,7 +68,6 @@ export default function Dashboard() {
 
   const state = data?.state;
   const pnl = data?.pnl;
-  const positions = data?.positions ?? [];
   const orders = data?.orders ?? [];
   const brokerTrades = data?.broker_trades ?? [];
   const brokerPositions = data?.broker_positions ?? [];
@@ -126,21 +125,7 @@ export default function Dashboard() {
         </div>
       )}
       {tab === "Positions" && (
-        <div className="space-y-6">
-          <div className="space-y-2">
-            <h2 className="text-sm font-medium text-neutral-300">Algo positions (this session)</h2>
-            <DataTable rows={positions as unknown as Record<string, unknown>[]} />
-          </div>
-          <div className="space-y-2">
-            <h2 className="text-sm font-medium text-neutral-300">
-              Broker positions (live account) · {brokerPositions.length}
-            </h2>
-            <p className="text-xs text-neutral-500">
-              Pulled live from the broker account (refreshed continuously). Includes positions opened outside this algo.
-            </p>
-            <DataTable rows={brokerPositions} />
-          </div>
-        </div>
+        <BrokerPositionsView brokerPnl={brokerPnl} rawPositions={brokerPositions} />
       )}
       {tab === "Orders" && <DataTable rows={orders as unknown as Record<string, unknown>[]} />}
       {tab === "Trades" && <DataTable rows={brokerTrades as unknown as Record<string, unknown>[]} />}

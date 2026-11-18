@@ -110,6 +110,8 @@ export type BrokerPositionPnL = {
 export type BrokerPnL = {
   total_realized: number; total_pnl: number; open_count: number;
   mtm_pending_count: number; per_position: BrokerPositionPnL[];
+  total_unrealized: number;   // total_pnl - total_realized
+  net_traded_value: number;   // sum(sell) - sum(buy); positive = net sold
 };
 export type Position = {
   symbol: string; side: string; quantity: number; average_price: number; last_price: number;
