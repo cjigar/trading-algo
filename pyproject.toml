@@ -16,7 +16,16 @@ dependencies = [
     "pydantic>=2.6",
     "pydantic-settings>=2.2",
     "pandas>=2.2",
-    "sqlmodel>=0.0.16",
+    # PINNED, do not loosen without a tz migration. sqlmodel >=0.0.40 (which pulls
+    # SQLAlchemy 2.1) rejects naive datetimes bound to DateTime columns:
+    #   ValueError: Datetime values must have timezone information.
+    # That breaks this schema's deliberate naive-UTC convention (see `_to_naive_utc` in
+    # persistence/repositories.py). Verified on 2026-11-18 against a fresh build: it fails
+    # BOTH `Repository.nifty_candles` (read) and `Repository.trim_nifty_candles` -- and the
+    # latter runs from `record_nifty_candle` on every closed candle, so the live loop dies at
+    # the first 5-minute close. Unpin only together with a full migration to tz-aware storage.
+    "sqlmodel==0.0.39",
+    "SQLAlchemy<2.1",
     # PostgreSQL is the only supported backend, so the driver is required, not an extra.
     "psycopg[binary]>=3.1",
     "structlog>=24.1",

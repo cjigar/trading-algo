@@ -8,6 +8,7 @@ their own throwaway database so the session database stays as the rest of the su
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 from sqlalchemy import text
 
@@ -329,5 +330,115 @@ def test_bootstrap_adds_new_columns_to_legacy_table(fresh_db):
             }
         for c in ("vwap", "expiry", "iv", "delta", "gamma", "theta", "vega"):
             assert c in cols, f"{c} column not added to legacy table"
+    finally:
+        engine.dispose()
+
+
+# --- naive-UTC timestamp convention (schema/code drift guard) --------------------------
+#
+# The schema stores datetimes as NAIVE UTC (see `_to_naive_utc` / `_as_utc_aware` in
+# persistence/repositories.py) and the read paths subtract them from a naive clock. That
+# convention is enforced only by how SQLModel happens to map a bare `datetime` field, which
+# is a dependency detail, not a declared contract:
+#
+#   sqlmodel <= 0.0.39  ->  TIMESTAMP WITHOUT TIME ZONE   (naive reads; what the code expects)
+#   sqlmodel >= 0.0.40  ->  TIMESTAMP WITH TIME ZONE      (tz-aware reads; breaks the code)
+#
+# Drift here is silent and nasty: `create_all` never ALTERs an existing column, so a schema
+# built by a newer sqlmodel keeps handing back tz-aware values even after the dependency is
+# pinned back. Observed in the deployed stack on 2026-11-18 -- `/api/state` returned 500 and
+# the `/api/stream` SSE payload died every tick with
+#
+#   TypeError: can't subtract offset-naive and offset-aware datetimes
+#
+# ...but only once a pnl_snapshots row existed, so an empty database looked perfectly healthy.
+# These tests fail loudly at that boundary instead. If you intend to move to tz-aware storage,
+# migrate the read paths off naive clocks first, then update these tests deliberately.
+
+# Anchors that must exist and be naive. Without these the sweep below could pass vacuously
+# (no timestamptz columns is trivially true of a schema with no timestamp columns at all).
+NAIVE_UTC_ANCHORS = {
+    ("pnl_snapshots", "timestamp"),
+    ("option_chain_snapshots", "timestamp"),
+    ("nifty_candles", "start"),
+    ("nifty_candles", "end"),
+    ("index_spots", "updated_at"),
+    ("index_spots", "fut_updated_at"),
+    ("live_quotes", "timestamp"),
+}
+
+
+def _timestamp_columns(engine) -> dict[tuple[str, str], str]:
+    """Every timestamp-typed column in the public schema, as {(table, column): data_type}."""
+    with engine.connect() as conn:
+        return {
+            (r[0], r[1]): r[2]
+            for r in conn.execute(
+                text(
+                    "SELECT table_name, column_name, data_type FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND data_type LIKE 'timestamp%'"
+                )
+            ).all()
+        }
+
+
+def test_pnl_snapshot_timestamp_round_trips_as_naive(fresh_db):
+    """The precise property the dashboard depends on, asserted behaviourally.
+
+    `_engine_pnl` computes the snapshot's age against a naive clock, so a tz-aware value here
+    raises TypeError. This is stronger than inspecting column types: it holds whatever the ORM
+    maps `datetime` to, and it is the exact round-trip that failed in production.
+    """
+    engine = create_engine_from_url(fresh_db, settings=SchemaTuning())
+    try:
+        repo = Repository(engine)
+        repo.record_pnl(Decimal("120"), Decimal("30"))
+        snap = repo.latest_pnl_snapshot()
+        assert snap is not None
+        assert snap.at.tzinfo is None, (
+            f"pnl_snapshots.timestamp read back tz-aware ({snap.at!r}). The read path in "
+            "dashboard/state_bridge.py compares it against a naive clock and will raise "
+            "'can't subtract offset-naive and offset-aware datetimes'. Check the installed "
+            "sqlmodel version and whether this database's schema predates the current pin."
+        )
+    finally:
+        engine.dispose()
+
+
+def test_no_datetime_column_is_timestamptz(fresh_db):
+    """Sweep the whole public schema, so a newly added model field cannot drift unnoticed."""
+    engine = create_engine_from_url(fresh_db, settings=SchemaTuning())
+    try:
+        drifted = sorted(
+            f"{table}.{column}"
+            for (table, column), dtype in _timestamp_columns(engine).items()
+            if dtype == "timestamp with time zone"
+        )
+        assert not drifted, (
+            "These columns are TIMESTAMP WITH TIME ZONE but the code treats stored datetimes as "
+            f"naive UTC: {', '.join(drifted)}. They will read back tz-aware and break every "
+            "age/staleness comparison. Usual cause: the schema was created by sqlmodel >= 0.0.40 "
+            "(see the pin in pyproject.toml), and create_all does not ALTER existing columns."
+        )
+    finally:
+        engine.dispose()
+
+
+def test_naive_utc_anchor_columns_are_present_and_naive(fresh_db):
+    """Keeps the sweep honest: the anchors must exist, and exist as naive timestamps."""
+    engine = create_engine_from_url(fresh_db, settings=SchemaTuning())
+    try:
+        cols = _timestamp_columns(engine)
+        missing = sorted(f"{t}.{c}" for (t, c) in NAIVE_UTC_ANCHORS if (t, c) not in cols)
+        assert not missing, (
+            f"Expected naive-UTC columns are absent from the schema: {', '.join(missing)}. "
+            "Either a model was renamed (update NAIVE_UTC_ANCHORS) or bootstrap did not run."
+        )
+        wrong = sorted(
+            f"{t}.{c} :: {cols[(t, c)]}"
+            for (t, c) in NAIVE_UTC_ANCHORS
+            if cols[(t, c)] != "timestamp without time zone"
+        )
+        assert not wrong, f"Anchor columns are not naive timestamps: {', '.join(wrong)}"
     finally:
         engine.dispose()
